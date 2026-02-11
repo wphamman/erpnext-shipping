@@ -1,0 +1,133 @@
+# ERPNext Shipping for WooCommerce
+
+Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing for WooCommerce.
+
+## Features
+
+- **Multi-carrier rates** — queries The Courier Guy (Ship Logic) and MDS Collivery APIs in real time
+- **ERPNext stock routing** — automatically determines which warehouse(s) to ship from based on live inventory
+- **N-location support** — configure unlimited dispatch locations via the admin UI
+- **Smart fulfillment** — single-location, cheapest-location, or split-shipment routing
+- **Tiered pricing** — groups carrier rates into Economy, Standard, and Express tiers, showing the cheapest option per tier
+- **Stock Locations for WooCommerce (SLW)** — optional integration syncs per-location stock and respects customer location selections
+- **Configurable pricing** — percentage or flat markup, free shipping threshold, flat rate fallback
+- **Rate caching** — 15-minute transient cache per location/destination/parcel combination
+- **WP Cron stock sync** — syncs ERPNext Bin data every 15 minutes (configurable)
+
+## Requirements
+
+| Requirement | Minimum |
+|---|---|
+| WordPress | 6.0+ |
+| WooCommerce | 8.0+ |
+| PHP | 8.0+ |
+| ERPNext | Any version with the Bin API |
+
+**Optional**: [Stock Locations for WooCommerce (SLW)](https://wordpress.org/plugins/stock-locations-for-woocommerce/) for per-location stock display and customer warehouse selection at checkout.
+
+## Installation
+
+1. Download or clone this repository into `wp-content/plugins/erpnext-shipping/`
+2. Activate the plugin in WordPress admin
+3. Go to **WooCommerce > Settings > Shipping** and add "ERPNext Multi-Carrier Shipping" to a shipping zone
+4. Configure the shipping method instance settings (carrier tokens, ERPNext credentials, pricing)
+5. Go to **WooCommerce > ERPNext Shipping** to add dispatch locations
+
+## Configuration
+
+### 1. Dispatch Locations
+
+Navigate to **WooCommerce > ERPNext Shipping** in the WordPress admin.
+
+Click **Add Location** and fill in:
+- **Location Name** — a descriptive name (e.g. "Cape Town Warehouse")
+- **Address fields** — street, suburb, city, province, postcode, country
+- **ERPNext Warehouses** — one warehouse name per line, exactly as they appear in ERPNext (e.g. `Main Warehouse - My Company`)
+- **SLW Term ID** — (optional) the Stock Locations for WooCommerce taxonomy term ID for this location
+
+You can add as many locations as needed. Each location can map to multiple ERPNext warehouses.
+
+### 2. ERPNext Stock Sync
+
+In the shipping method instance settings (**WooCommerce > Settings > Shipping > [Zone] > Edit**):
+
+- **ERPNext URL** — your ERPNext instance URL (e.g. `https://erp.example.com`)
+- **API Key** / **API Secret** — ERPNext API credentials with read access to the Bin doctype
+- **Sync Now** — manually trigger a stock sync
+
+Stock is synced automatically every 15 minutes via WP Cron. The sync pulls all Bin records for your configured warehouses and maps them to locations.
+
+### 3. Carrier APIs
+
+**The Courier Guy (Ship Logic)**:
+- Enable the carrier and enter your Ship Logic Bearer token from [shiplogic.com](https://www.shiplogic.com)
+
+**MDS Collivery**:
+- Enable the carrier and enter your API token from [collivery.co.za](https://collivery.co.za)
+
+### 4. Pricing
+
+- **Markup** — add a percentage or flat amount on top of carrier rates
+- **Free Shipping Above** — cart subtotal threshold for free shipping (0 to disable)
+- **Flat Rate Fallback** — shown when all carrier APIs fail (0 to disable)
+
+All prices are rounded up to the nearest R5.
+
+## How It Works
+
+1. Customer enters their address at checkout
+2. Plugin checks ERPNext stock data to determine which location(s) can fulfill the order
+3. Estimates parcel weight and dimensions from cart contents
+4. Queries enabled carrier APIs for each dispatch location
+5. Groups results into 3 tiers: Economy (2-5 days), Standard (1-2 days), Express (overnight)
+6. Shows the cheapest option per tier with clean customer-facing labels
+7. For split shipments, sums rates across locations and labels them accordingly
+
+### Fulfillment Logic
+
+| Scenario | Behavior |
+|---|---|
+| One location has stock | Ships from that location |
+| Multiple locations have stock | Quotes all, picks cheapest per tier |
+| No single location has all items | Splits shipment across locations |
+| No stock data available | Falls back to first configured location |
+
+## Extending
+
+### Adding a Carrier
+
+Create a class extending `ES_Carrier_Base` with these methods:
+
+```php
+class ES_Carrier_MyCarrier extends ES_Carrier_Base {
+    public function get_carrier_name() { return 'My Carrier'; }
+    public function is_configured() { /* return bool */ }
+    public function get_rates( $origin, $destination, $parcels ) { /* return array */ }
+    public function map_service_tier( $service_code ) { /* return 'economy'|'standard'|'express' */ }
+}
+```
+
+Each rate returned should be an array with: `carrier`, `service_name`, `service_code`, `tier`, `price_incl_vat`, `estimated_days`.
+
+## File Structure
+
+```
+erpnext-shipping/
+├── erpnext-shipping.php              # Plugin bootstrap, cron, AJAX
+├── includes/
+│   ├── class-es-shipping-method.php  # WC_Shipping_Method (main logic)
+│   ├── class-es-admin-page.php       # Admin settings page + location UI
+│   ├── class-es-stock-sync.php       # ERPNext Bin sync + fulfillment planning
+│   ├── class-es-parcel-estimator.php # Cart → parcel dimensions/weight
+│   ├── class-es-rate-cache.php       # Transient-based rate caching
+│   ├── class-es-carrier-base.php     # Abstract carrier interface
+│   ├── class-es-carrier-shiplogic.php # The Courier Guy (Ship Logic API)
+│   └── class-es-carrier-collivery.php # MDS Collivery (API v3)
+├── README.md
+├── LICENSE
+└── CHANGELOG.md
+```
+
+## License
+
+GPL-2.0-or-later. See [LICENSE](LICENSE) for details.
