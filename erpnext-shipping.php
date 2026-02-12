@@ -15,6 +15,15 @@ defined( 'ABSPATH' ) || exit;
 define( 'ES_SHIPPING_VERSION', '1.0.0' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
+// Add custom 15-minute cron interval (registered early so activation hook can use it).
+add_filter( 'cron_schedules', function ( $schedules ) {
+    $schedules['es_every_15_min'] = array(
+        'interval' => 900,
+        'display'  => __( 'Every 15 Minutes', 'erpnext-shipping' ),
+    );
+    return $schedules;
+} );
+
 // Admin settings page (under WooCommerce menu).
 if ( is_admin() ) {
     require_once ES_SHIPPING_PATH . 'includes/class-es-admin-page.php';
@@ -80,15 +89,6 @@ function es_shipping_deactivate() {
     wp_clear_scheduled_hook( 'es_shipping_stock_sync' );
 }
 register_deactivation_hook( __FILE__, 'es_shipping_deactivate' );
-
-// Add custom 15-minute cron interval.
-add_filter( 'cron_schedules', function ( $schedules ) {
-    $schedules['es_every_15_min'] = array(
-        'interval' => 900,
-        'display'  => __( 'Every 15 Minutes', 'erpnext-shipping' ),
-    );
-    return $schedules;
-} );
 
 // Hook the sync action.
 add_action( 'es_shipping_stock_sync', function () {
