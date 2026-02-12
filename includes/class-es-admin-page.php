@@ -225,7 +225,7 @@ class ES_Admin_Page {
                         <th><label for="company_name"><?php esc_html_e( 'Company Name', 'erpnext-shipping' ); ?></label></th>
                         <td>
                             <input type="text" name="company_name" id="company_name" class="regular-text" value="<?php echo esc_attr( $v( 'company_name' ) ); ?>">
-                            <p class="description"><?php esc_html_e( 'Used in carrier API requests (e.g. collection address).', 'erpnext-shipping' ); ?></p>
+                            <p class="description"><?php esc_html_e( 'Your business name as it should appear on shipping labels and waybills.', 'erpnext-shipping' ); ?></p>
                         </td>
                     </tr>
                     <tr>
@@ -236,7 +236,7 @@ class ES_Admin_Page {
 
                 <!-- Dispatch Locations -->
                 <h2><?php esc_html_e( 'Dispatch Locations', 'erpnext-shipping' ); ?></h2>
-                <p class="description"><?php esc_html_e( 'Add your warehouse/dispatch locations. Each location maps to one or more ERPNext warehouses for stock routing.', 'erpnext-shipping' ); ?></p>
+                <p class="description"><?php esc_html_e( 'Add your dispatch locations. Each location represents a physical address that parcels ship from. If you have multiple ERPNext warehouses at the same address (e.g. a warehouse and a retail shop in the same building), group them under one location.', 'erpnext-shipping' ); ?></p>
 
                 <div id="es-locations-container">
                     <?php if ( empty( $locations ) ) : ?>
@@ -244,7 +244,10 @@ class ES_Admin_Page {
                     <?php endif; ?>
                 </div>
 
-                <p><button type="button" class="button" id="es-add-location"><?php esc_html_e( 'Add Location', 'erpnext-shipping' ); ?></button></p>
+                <p>
+                    <button type="button" class="button" id="es-add-location"><?php esc_html_e( 'Add Location', 'erpnext-shipping' ); ?></button>
+                    <input type="submit" name="es_shipping_save" class="button button-primary" value="<?php esc_attr_e( 'Save Settings', 'erpnext-shipping' ); ?>" style="margin-left:10px;">
+                </p>
 
                 <input type="hidden" name="es_locations_json" id="es-locations-json" value="">
 
@@ -257,13 +260,14 @@ class ES_Admin_Page {
                 </table>
 
                 <!-- Carriers -->
-                <h2><?php esc_html_e( 'The Courier Guy (Ship Logic)', 'erpnext-shipping' ); ?></h2>
+                <h2><?php esc_html_e( 'The Courier Guy', 'erpnext-shipping' ); ?></h2>
                 <table class="form-table">
                     <tr>
                         <th><label for="tcg_enabled"><?php esc_html_e( 'Enable', 'erpnext-shipping' ); ?></label></th>
                         <td><label><input type="checkbox" name="tcg_enabled" id="tcg_enabled" value="1" <?php checked( $v( 'tcg_enabled', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Enable The Courier Guy rates', 'erpnext-shipping' ); ?></label></td>
                     </tr>
                     <?php $this->render_password_row( 'tcg_api_token', __( 'Ship Logic API Token', 'erpnext-shipping' ), $v( 'tcg_api_token' ) ); ?>
+                    <tr><th></th><td><p class="description"><?php esc_html_e( 'The Courier Guy rates are fetched via the Ship Logic platform. Get your API token at shiplogic.com.', 'erpnext-shipping' ); ?></p></td></tr>
                 </table>
 
                 <h2><?php esc_html_e( 'MDS Collivery', 'erpnext-shipping' ); ?></h2>
@@ -411,8 +415,10 @@ class ES_Admin_Page {
                             '<div><label>Province</label><input type="text" class="es-loc-province" value="' + escAttr(loc.province || '') + '"></div>' +
                             '<div><label>Postal Code</label><input type="text" class="es-loc-postcode" value="' + escAttr(loc.postcode || '') + '"></div>' +
                             '<div><label>Country</label><input type="text" class="es-loc-country" value="' + escAttr(loc.country || 'ZA') + '"></div>' +
-                            '<div class="es-full-width"><label>ERPNext Warehouses (one per line)</label><textarea class="es-loc-warehouses" rows="3" placeholder="Warehouse Name - Company">' + escAttr(whText) + '</textarea></div>' +
-                            '<div><label>SLW Term ID</label><input type="number" class="es-loc-slw-term small-text" value="' + (loc.slw_term_id || '') + '" min="0" placeholder="Optional"></div>' +
+                            '<div class="es-full-width"><label>ERPNext Warehouses (one per line)</label><textarea class="es-loc-warehouses" rows="3" placeholder="Main Warehouse - My Company&#10;Retail Shop - My Company">' + escAttr(whText) + '</textarea>' +
+                            '<p class="description" style="margin-top:4px;">List all ERPNext warehouses that ship from this location. Stock from these warehouses will be combined when determining if this location can fulfill an order.</p></div>' +
+                            '<div><label>SLW Term ID (optional)</label><input type="number" class="es-loc-slw-term small-text" value="' + (loc.slw_term_id || '') + '" min="0" placeholder="Optional">' +
+                            '<p class="description" style="margin-top:4px;">If using Stock Locations for WooCommerce, create the location there first, then copy its term ID here. Find it under Products &gt; Stock Locations.</p></div>' +
                         '</div>' +
                     '</div>';
                     $container.append(card);

@@ -47,7 +47,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'title'       => __( 'Company Name', 'erpnext-shipping' ),
                 'type'        => 'text',
                 'default'     => '',
-                'description' => __( 'Used in carrier API requests (e.g. collection address).', 'erpnext-shipping' ),
+                'description' => __( 'Your business name as it should appear on shipping labels and waybills (e.g. "My Store").', 'erpnext-shipping' ),
             ),
             'locations_notice' => array(
                 'title' => __( 'Dispatch Locations', 'erpnext-shipping' ),
@@ -76,9 +76,9 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'title' => __( 'Stock Sync', 'erpnext-shipping' ),
                 'type'  => 'sync_button',
             ),
-            // ── The Courier Guy ──
+            // ── The Courier Guy (via Ship Logic) ──
             'tcg_heading' => array(
-                'title' => __( 'The Courier Guy (Ship Logic)', 'erpnext-shipping' ),
+                'title' => __( 'The Courier Guy', 'erpnext-shipping' ),
                 'type'  => 'title',
             ),
             'tcg_enabled' => array(
@@ -90,7 +90,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             'tcg_api_token' => array(
                 'title'       => __( 'Ship Logic API Token', 'erpnext-shipping' ),
                 'type'        => 'password',
-                'description' => __( 'Bearer token from shiplogic.com', 'erpnext-shipping' ),
+                'description' => __( 'The Courier Guy rates are fetched via the Ship Logic platform. Get your API token at shiplogic.com.', 'erpnext-shipping' ),
             ),
 
             // ── MDS Collivery ──
