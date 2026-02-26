@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Smart free shipping filter** (`woocommerce_package_rates`): removes free shipping for split shipments to protect margins, hides cheapest carrier rate when free shipping is available so customers see free + premium options.
+- **Free Shipping Source setting**: choose between WC's native Free Shipping zone method (recommended for CommerceKit/theme integration) or the plugin's built-in threshold. Defaults to "WC method".
+- **No Free Shipping Classes**: comma-separated shipping class slugs (e.g. "heavy") — orders containing items in these classes don't get free shipping, with a customer-facing notice.
 - **Split shipment notice**: customers are informed when free shipping isn't available due to multi-warehouse fulfillment.
 - **Cart location auto-update**: changing the SLW warehouse dropdown on the cart page automatically recalculates shipping rates.
 - **Continue Shopping referrer**: "Continue Shopping" button returns customers to their last browsed shop/category/product page instead of the default shop page.
@@ -13,7 +15,7 @@ All notable changes to this project will be documented in this file.
 - **Future locker compatibility**: rate filter skips `_locker` suffix rates, ready for TCG Locker integration.
 
 ### Changed
-- **Free shipping no longer returns early** in `calculate_shipping()`: carrier rates are always fetched alongside free shipping, giving customers the choice of premium (faster) shipping even when free is available. The `woocommerce_package_rates` filter handles which rates to display.
+- **Free shipping in `calculate_shipping()`**: when source is "plugin", carrier rates are still fetched alongside free shipping so the `woocommerce_package_rates` filter can offer premium options. When source is "WC method", the plugin only calculates carrier rates.
 
 ## [1.0.2] - 2025-02-15
 

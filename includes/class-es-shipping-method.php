@@ -131,12 +131,28 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'default' => '0',
                 'custom_attributes' => array( 'min' => '0', 'step' => '0.01' ),
             ),
+            'free_shipping_source' => array(
+                'title'       => __( 'Free Shipping Source', 'erpnext-shipping' ),
+                'type'        => 'select',
+                'options'     => array(
+                    'wc_method' => __( 'WooCommerce Free Shipping zone method (recommended for CommerceKit/theme integration)', 'erpnext-shipping' ),
+                    'plugin'    => __( 'This plugin (uses threshold below)', 'erpnext-shipping' ),
+                ),
+                'default'     => 'wc_method',
+                'description' => __( 'Where free shipping is configured. "WC method" means you have a Free Shipping method in your WC Shipping Zone. "This plugin" means free shipping is handled by the threshold below.', 'erpnext-shipping' ),
+            ),
             'free_shipping_threshold' => array(
                 'title'       => __( 'Free Shipping Above (R)', 'erpnext-shipping' ),
                 'type'        => 'number',
                 'default'     => '0',
-                'description' => __( 'Set to 0 to disable free shipping.', 'erpnext-shipping' ),
+                'description' => __( 'Only used when Free Shipping Source is set to "This plugin". Set to 0 to disable.', 'erpnext-shipping' ),
                 'custom_attributes' => array( 'min' => '0', 'step' => '1' ),
+            ),
+            'no_free_shipping_classes' => array(
+                'title'       => __( 'No Free Shipping Classes', 'erpnext-shipping' ),
+                'type'        => 'text',
+                'default'     => '',
+                'description' => __( 'Comma-separated shipping class slugs. Orders containing items in these classes will not get free shipping (e.g. "heavy, oversized").', 'erpnext-shipping' ),
             ),
             'fallback_rate' => array(
                 'title'       => __( 'Flat Rate Fallback (R)', 'erpnext-shipping' ),
@@ -397,22 +413,22 @@ class ES_Shipping_Method extends WC_Shipping_Method {
     private function do_calculate_shipping( $package ) {
         $start_time = microtime( true );
 
-        // 1. Free shipping check (don't return early — still fetch carrier rates so
-        //    customers can choose premium options; the woocommerce_package_rates
-        //    filter hides the cheapest carrier rate when free shipping is available).
-        $threshold = floatval( $this->get_option( 'free_shipping_threshold', 0 ) );
-        $cart_total = 0;
+        // 1. Free shipping check (only when source is "plugin", not "wc_method").
+        $free_source = $this->get_option( 'free_shipping_source', 'wc_method' );
+        $threshold   = floatval( $this->get_option( 'free_shipping_threshold', 0 ) );
+        $cart_total  = 0;
         if ( WC()->cart ) {
             $cart_total = WC()->cart->get_subtotal();
         }
-        $qualifies_for_free = ( $threshold > 0 && $cart_total >= $threshold );
-        if ( $qualifies_for_free ) {
+        if ( 'plugin' === $free_source && $threshold > 0 && $cart_total >= $threshold ) {
             $this->add_rate( array(
                 'id'    => $this->id . '_free',
                 'label' => __( 'Free Shipping', 'erpnext-shipping' ),
                 'cost'  => 0,
             ) );
-            $this->log( 'Free shipping: cart R' . $cart_total . ' >= threshold R' . $threshold . ' — continuing to fetch carrier rates' );
+            $this->log( 'Free shipping (plugin): cart R' . $cart_total . ' >= threshold R' . $threshold . ' — continuing to fetch carrier rates' );
+            // Don't return — still fetch carrier rates so the woocommerce_package_rates
+            // filter can offer premium options alongside free shipping.
         }
 
         // 2. Build destination address from the package.

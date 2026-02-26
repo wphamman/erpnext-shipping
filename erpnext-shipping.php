@@ -79,8 +79,38 @@ add_action( 'wp_head', function () {
  * Smart free shipping logic:
  * - Remove free shipping for split shipments (multiple warehouses = dual shipping cost).
  * - Hide cheapest carrier rate when free shipping is available (single package only).
+ *
+ * Adapts to the "Free Shipping Source" setting:
+ * - "wc_method": looks for WC's native Free Shipping zone method (method_id = free_shipping).
+ * - "plugin": looks for the plugin's own free rate (rate_id ending in _free).
  */
 add_filter( 'woocommerce_package_rates', function ( $rates, $package ) {
+    // Read plugin settings from the first ES instance found in rates.
+    $free_source      = 'wc_method';
+    $excluded_classes = array();
+    foreach ( $rates as $rate ) {
+        if ( 'erpnext_shipping' === $rate->method_id ) {
+            $instance_id = $rate->instance_id;
+            $opts = get_option( 'woocommerce_erpnext_shipping_' . $instance_id . '_settings', array() );
+            $free_source = $opts['free_shipping_source'] ?? 'wc_method';
+            // Parse comma-separated shipping class slugs.
+            $raw = trim( $opts['no_free_shipping_classes'] ?? '' );
+            if ( $raw !== '' ) {
+                $excluded_classes = array_map( 'trim', explode( ',', $raw ) );
+            }
+            break;
+        }
+    }
+
+    // Helper: check if a rate is the "free shipping" rate based on the configured source.
+    $is_free_rate = function ( $rate_id, $rate ) use ( $free_source ) {
+        if ( 'wc_method' === $free_source ) {
+            return 'free_shipping' === $rate->method_id;
+        }
+        // Plugin source: check for our own _free rate.
+        return 'erpnext_shipping' === $rate->method_id && substr( $rate_id, -5 ) === '_free';
+    };
+
     // 1. Detect split shipments.
     $is_split = false;
 
@@ -109,7 +139,7 @@ add_filter( 'woocommerce_package_rates', function ( $rates, $package ) {
     if ( $is_split ) {
         $had_free = false;
         foreach ( $rates as $rate_id => $rate ) {
-            if ( 'erpnext_shipping' === $rate->method_id && substr( $rate_id, -5 ) === '_free' ) {
+            if ( $is_free_rate( $rate_id, $rate ) ) {
                 $had_free = true;
                 unset( $rates[ $rate_id ] );
             }
@@ -131,10 +161,36 @@ add_filter( 'woocommerce_package_rates', function ( $rates, $package ) {
         WC()->session->set( 'es_split_notice_shown', false );
     }
 
-    // 3. For single-package orders: hide cheapest carrier rate when free shipping is available.
+    // 3. Remove free shipping if cart contains items in excluded shipping classes (e.g. "Heavy").
+    if ( ! empty( $excluded_classes ) ) {
+        foreach ( $package['contents'] as $item ) {
+            $product = $item['data'];
+            if ( $product && in_array( $product->get_shipping_class(), $excluded_classes, true ) ) {
+                foreach ( $rates as $rate_id => $rate ) {
+                    if ( $is_free_rate( $rate_id, $rate ) ) {
+                        unset( $rates[ $rate_id ] );
+                    }
+                }
+                if ( WC()->session && ! WC()->session->get( 'es_heavy_notice_shown' ) ) {
+                    wc_add_notice(
+                        __( 'Free shipping is not available for orders containing heavy items. Standard shipping rates apply.', 'erpnext-shipping' ),
+                        'notice'
+                    );
+                    WC()->session->set( 'es_heavy_notice_shown', true );
+                }
+                return $rates;
+            }
+        }
+        // Clear the notice flag if no excluded items.
+        if ( WC()->session ) {
+            WC()->session->set( 'es_heavy_notice_shown', false );
+        }
+    }
+
+    // 4. For single-package orders: hide cheapest carrier rate when free shipping is available.
     $has_free = false;
     foreach ( $rates as $rate_id => $rate ) {
-        if ( 'erpnext_shipping' === $rate->method_id && substr( $rate_id, -5 ) === '_free' ) {
+        if ( $is_free_rate( $rate_id, $rate ) ) {
             $has_free = true;
             break;
         }
@@ -144,10 +200,10 @@ add_filter( 'woocommerce_package_rates', function ( $rates, $package ) {
         return $rates;
     }
 
-    // Find all carrier rates (excluding locker — kept for future locker support).
+    // Find all carrier rates (excluding free and locker — locker kept for future support).
     $carrier_rates = array();
     foreach ( $rates as $rate_id => $rate ) {
-        if ( 'erpnext_shipping' === $rate->method_id && substr( $rate_id, -5 ) !== '_free' && substr( $rate_id, -7 ) !== '_locker' ) {
+        if ( 'erpnext_shipping' === $rate->method_id && ! $is_free_rate( $rate_id, $rate ) && substr( $rate_id, -7 ) !== '_locker' ) {
             $carrier_rates[ $rate_id ] = $rate;
         }
     }
