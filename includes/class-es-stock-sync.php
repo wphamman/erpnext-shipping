@@ -117,11 +117,14 @@ class ES_Stock_Sync {
             $stock[ $item ][ $loc_id ] += $qty;
         }
 
+        // Get previous stock before overwriting — needed to zero out depleted items in SLW.
+        $prev_stock = get_option( self::OPTION_STOCK, array() );
+
         update_option( self::OPTION_STOCK, $stock, false );
         update_option( self::OPTION_LAST_SYNC, time(), false );
 
         // Write per-location stock to SLW product meta (if SLW is installed).
-        $this->sync_to_slw( $stock );
+        $this->sync_to_slw( $stock, $prev_stock );
 
         return count( $stock );
     }
@@ -165,9 +168,10 @@ class ES_Stock_Sync {
 
     /**
      * Write per-location stock to SLW product meta.
+     * Also zeroes out SLW meta for items that dropped to zero stock since the last sync.
      * Skips gracefully if SLW plugin is not installed.
      */
-    private function sync_to_slw( $stock ) {
+    private function sync_to_slw( $stock, $prev_stock = array() ) {
         if ( ! taxonomy_exists( 'location' ) ) {
             return;
         }
@@ -180,6 +184,7 @@ class ES_Stock_Sync {
         $term_ids = array_values( $map );
         $updated  = 0;
 
+        // Update items that have stock.
         foreach ( $stock as $item_code => $location_qtys ) {
             $product_id = wc_get_product_id_by_sku( $item_code );
             if ( ! $product_id ) {
@@ -196,6 +201,19 @@ class ES_Stock_Sync {
             }
 
             $updated++;
+        }
+
+        // Zero out SLW meta for items that had stock in the previous sync but are
+        // now depleted (not present in $stock because ERPNext filter is actual_qty > 0).
+        $depleted = array_diff_key( $prev_stock, $stock );
+        foreach ( $depleted as $item_code => $old_qtys ) {
+            $product_id = wc_get_product_id_by_sku( $item_code );
+            if ( ! $product_id ) {
+                continue;
+            }
+            foreach ( $map as $loc_id => $term_id ) {
+                update_post_meta( $product_id, '_stock_at_' . $term_id, 0 );
+            }
         }
 
         return $updated;

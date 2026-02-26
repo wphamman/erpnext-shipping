@@ -114,11 +114,16 @@ add_filter( 'woocommerce_package_rates', function ( $rates, $package ) {
     // 1. Detect split shipments.
     $is_split = false;
 
-    // Check rate labels for "ships from X locations" text (set by calculate_shipping).
+    // Check rate metadata for split flag (locale-safe, set by calculate_shipping).
     foreach ( $rates as $rate ) {
-        if ( 'erpnext_shipping' === $rate->method_id && preg_match( '/ships from \d+ locations/', $rate->label ) ) {
-            $is_split = true;
-            break;
+        if ( 'erpnext_shipping' === $rate->method_id ) {
+            $meta = $rate->get_meta_data();
+            foreach ( $meta as $key => $value ) {
+                if ( '_es_is_split' === $key && '1' === $value ) {
+                    $is_split = true;
+                    break 2;
+                }
+            }
         }
     }
 

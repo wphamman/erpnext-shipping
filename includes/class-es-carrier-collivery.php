@@ -45,8 +45,8 @@ class ES_Carrier_Collivery extends ES_Carrier_Base {
         }
 
         // Resolve town IDs from city names.
-        $from_town = $this->resolve_town_id( $origin['city'] );
-        $to_town   = $this->resolve_town_id( $destination['city'] );
+        $from_town = $this->resolve_town_id( $origin['city'], $origin['zone'] ?? '' );
+        $to_town   = $this->resolve_town_id( $destination['city'], $destination['zone'] ?? '' );
 
         if ( ! $from_town || ! $to_town ) {
             return false;
@@ -125,13 +125,15 @@ class ES_Carrier_Collivery extends ES_Carrier_Base {
 
     /**
      * Resolve a city name to a Collivery town ID (cached 24h).
+     * When province is provided, prefers results matching the province to avoid
+     * ambiguous city name collisions (e.g. "Springfield" in multiple provinces).
      */
-    private function resolve_town_id( $city_name ) {
+    private function resolve_town_id( $city_name, $province = '' ) {
         if ( empty( $city_name ) ) {
             return false;
         }
 
-        $cache_key = self::TOWN_CACHE . sanitize_key( $city_name );
+        $cache_key = self::TOWN_CACHE . sanitize_key( $city_name . '_' . $province );
         $cached    = get_transient( $cache_key );
         if ( $cached !== false ) {
             return intval( $cached );
@@ -154,7 +156,24 @@ class ES_Carrier_Collivery extends ES_Carrier_Base {
             return false;
         }
 
-        $town_id = intval( $data['data'][0]['id'] ?? 0 );
+        // If province is provided, try to find a result that matches it.
+        $town_id = 0;
+        if ( ! empty( $province ) ) {
+            $province_lower = strtolower( trim( $province ) );
+            foreach ( $data['data'] as $town ) {
+                $town_province = strtolower( trim( $town['province'] ?? '' ) );
+                if ( strpos( $town_province, $province_lower ) !== false || strpos( $province_lower, $town_province ) !== false ) {
+                    $town_id = intval( $town['id'] ?? 0 );
+                    break;
+                }
+            }
+        }
+
+        // Fall back to first result if no province match.
+        if ( $town_id <= 0 ) {
+            $town_id = intval( $data['data'][0]['id'] ?? 0 );
+        }
+
         if ( $town_id > 0 ) {
             set_transient( $cache_key, $town_id, DAY_IN_SECONDS );
         }

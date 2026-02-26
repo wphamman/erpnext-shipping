@@ -19,7 +19,7 @@ class ES_Admin_Page {
     public function detect_instance() {
         global $wpdb;
         $row = $wpdb->get_row(
-            "SELECT instance_id FROM {$wpdb->prefix}woocommerce_shipping_zone_methods WHERE method_id = 'erpnext_shipping' AND is_enabled = 1 LIMIT 1"
+            "SELECT instance_id FROM {$wpdb->prefix}woocommerce_shipping_zone_methods WHERE method_id = 'erpnext_shipping' AND is_enabled = 1 ORDER BY instance_id ASC LIMIT 1"
         );
         if ( $row ) {
             $this->instance_id = intval( $row->instance_id );
@@ -127,16 +127,21 @@ class ES_Admin_Page {
             }
         }
 
-        $checkbox_fields = array( 'enabled', 'tcg_enabled', 'mds_enabled', 'debug_mode' );
+        $checkbox_fields = array( 'enabled', 'tcg_enabled', 'mds_enabled', 'debug' );
         foreach ( $checkbox_fields as $key ) {
             $opts[ $key ] = isset( $_POST[ $key ] ) ? 'yes' : 'no';
         }
 
-        $select_fields = array( 'markup_type' );
+        $select_fields = array( 'markup_type', 'free_shipping_source' );
         foreach ( $select_fields as $key ) {
             if ( isset( $_POST[ $key ] ) ) {
                 $opts[ $key ] = sanitize_text_field( wp_unslash( $_POST[ $key ] ) );
             }
+        }
+
+        // No free shipping classes (comma-separated text).
+        if ( isset( $_POST['no_free_shipping_classes'] ) ) {
+            $opts['no_free_shipping_classes'] = sanitize_text_field( wp_unslash( $_POST['no_free_shipping_classes'] ) );
         }
 
         update_option( $this->option_key, $opts );
@@ -229,8 +234,8 @@ class ES_Admin_Page {
                         </td>
                     </tr>
                     <tr>
-                        <th><label for="debug_mode"><?php esc_html_e( 'Debug Logging', 'erpnext-shipping' ); ?></label></th>
-                        <td><label><input type="checkbox" name="debug_mode" id="debug_mode" value="1" <?php checked( $v( 'debug_mode', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Log shipping calculations to WooCommerce logs', 'erpnext-shipping' ); ?></label></td>
+                        <th><label for="debug"><?php esc_html_e( 'Debug Logging', 'erpnext-shipping' ); ?></label></th>
+                        <td><label><input type="checkbox" name="debug" id="debug" value="1" <?php checked( $v( 'debug', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Log shipping calculations to WooCommerce logs', 'erpnext-shipping' ); ?></label></td>
                     </tr>
                 </table>
 
@@ -293,7 +298,19 @@ class ES_Admin_Page {
                         </td>
                     </tr>
                     <?php $this->render_number_row( 'markup_value', __( 'Markup Value', 'erpnext-shipping' ), $v( 'markup_value', '0' ) ); ?>
-                    <?php $this->render_number_row( 'free_shipping_threshold', __( 'Free Shipping Above (R)', 'erpnext-shipping' ), $v( 'free_shipping_threshold', '0' ), __( 'Set to 0 to disable.', 'erpnext-shipping' ) ); ?>
+                    <tr>
+                        <th><label for="free_shipping_source"><?php esc_html_e( 'Free Shipping Source', 'erpnext-shipping' ); ?></label></th>
+                        <td>
+                            <select name="free_shipping_source" id="free_shipping_source">
+                                <option value="wc_method" <?php selected( $v( 'free_shipping_source', 'wc_method' ), 'wc_method' ); ?>><?php esc_html_e( 'WooCommerce Free Shipping zone method', 'erpnext-shipping' ); ?></option>
+                                <option value="plugin" <?php selected( $v( 'free_shipping_source' ), 'plugin' ); ?>><?php esc_html_e( 'This plugin (uses threshold below)', 'erpnext-shipping' ); ?></option>
+                            </select>
+                            <p class="description"><?php esc_html_e( '"WC method" is recommended if your theme shows a free shipping progress bar.', 'erpnext-shipping' ); ?></p>
+                        </td>
+                    </tr>
+                    <?php $this->render_number_row( 'free_shipping_threshold', __( 'Free Shipping Above (R)', 'erpnext-shipping' ), $v( 'free_shipping_threshold', '0' ), __( 'Only used when source is "This plugin". Set to 0 to disable.', 'erpnext-shipping' ) ); ?>
+                    <?php $this->render_text_row( 'no_free_shipping_classes', __( 'No Free Shipping Classes', 'erpnext-shipping' ), $v( 'no_free_shipping_classes', '' ) ); ?>
+                    <tr><th></th><td><p class="description"><?php esc_html_e( 'Comma-separated shipping class slugs. Orders with items in these classes will not qualify for free shipping (e.g. "heavy, oversized").', 'erpnext-shipping' ); ?></p></td></tr>
                     <?php $this->render_number_row( 'fallback_rate', __( 'Flat Rate Fallback (R)', 'erpnext-shipping' ), $v( 'fallback_rate', '0' ), __( 'Used when carrier APIs fail.', 'erpnext-shipping' ) ); ?>
                 </table>
 

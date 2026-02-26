@@ -619,14 +619,19 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 $label .= ' ' . sprintf( _n( '(ships from %d location)', '(ships from %d locations)', $split_count, 'erpnext-shipping' ), $split_count );
             }
 
+            $meta = array(
+                'Carrier' => $rate['carrier'],
+                'Service' => $rate['service_name'] ?? '',
+            );
+            if ( $is_split ) {
+                $meta['_es_is_split'] = '1';
+            }
+
             $this->add_rate( array(
                 'id'        => $this->id . '_' . $tier,
                 'label'     => $label,
                 'cost'      => $cost,
-                'meta_data' => array(
-                    'Carrier' => $rate['carrier'],
-                    'Service' => $rate['service_name'] ?? '',
-                ),
+                'meta_data' => $meta,
             ) );
             $this->log( 'Rate added: ' . $label . ' R' . $cost . ' (' . $rate['carrier'] . ')' );
         }
