@@ -7,10 +7,16 @@ class ES_Rate_Cache {
 
     /**
      * Build a cache key from origin, destination, and parcel data.
+     *
+     * Includes both city and postcode to prevent cache collisions when different
+     * cities share the same postcode.
      */
-    public function build_key( $location_id, $origin_postcode, $dest_postcode, $parcels ) {
+    public function build_key( $origin, $destination, $parcels ) {
+        // Include both postcode AND city to prevent cache collisions
+        $origin_key = ( $origin['code'] ?? '' ) . '|' . ( $origin['city'] ?? '' );
+        $dest_key   = ( $destination['code'] ?? '' ) . '|' . ( $destination['city'] ?? '' );
         $parcel_hash = md5( wp_json_encode( $parcels ) );
-        return 'es_ship_' . md5( $location_id . '_' . $origin_postcode . '_' . $dest_postcode . '_' . $parcel_hash );
+        return 'es_ship_' . md5( $origin_key . '_' . $dest_key . '_' . $parcel_hash );
     }
 
     /**

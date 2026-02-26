@@ -397,20 +397,22 @@ class ES_Shipping_Method extends WC_Shipping_Method {
     private function do_calculate_shipping( $package ) {
         $start_time = microtime( true );
 
-        // 1. Free shipping check.
+        // 1. Free shipping check (don't return early — still fetch carrier rates so
+        //    customers can choose premium options; the woocommerce_package_rates
+        //    filter hides the cheapest carrier rate when free shipping is available).
         $threshold = floatval( $this->get_option( 'free_shipping_threshold', 0 ) );
         $cart_total = 0;
         if ( WC()->cart ) {
             $cart_total = WC()->cart->get_subtotal();
         }
-        if ( $threshold > 0 && $cart_total >= $threshold ) {
+        $qualifies_for_free = ( $threshold > 0 && $cart_total >= $threshold );
+        if ( $qualifies_for_free ) {
             $this->add_rate( array(
                 'id'    => $this->id . '_free',
                 'label' => __( 'Free Shipping', 'erpnext-shipping' ),
                 'cost'  => 0,
             ) );
-            $this->log( 'Free shipping: cart R' . $cart_total . ' >= threshold R' . $threshold );
-            return;
+            $this->log( 'Free shipping: cart R' . $cart_total . ' >= threshold R' . $threshold . ' — continuing to fetch carrier rates' );
         }
 
         // 2. Build destination address from the package.
@@ -530,7 +532,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             $this->log( 'Location ' . $lq['location'] . ' parcels: ' . wp_json_encode( $parcels ) );
 
             // Check cache.
-            $cache_key = $cache->build_key( $lq['location'], $origin['code'], $destination['code'], $parcels );
+            $cache_key = $cache->build_key( $origin, $destination, $parcels );
             $cached = $cache->get( $cache_key );
             if ( $cached !== false ) {
                 $this->log( 'Cache hit for ' . $lq['location'] );
