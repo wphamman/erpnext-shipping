@@ -53,14 +53,19 @@ class ES_Stock_Sync {
     /**
      * Pull Bin data from ERPNext and store in WordPress options.
      */
+    /** @var string Last error message (available after sync() returns false). */
+    public $last_error = '';
+
     public function sync() {
         if ( empty( $this->erp_url ) || empty( $this->erp_key ) ) {
+            $this->last_error = 'ERPNext URL or API Key is empty.';
             return false;
         }
 
         $warehouse_map = self::build_warehouse_map();
         $warehouses    = array_keys( $warehouse_map );
         if ( empty( $warehouses ) ) {
+            $this->last_error = 'No ERPNext warehouses configured. Add warehouses to your dispatch locations first.';
             return false;
         }
 
@@ -85,11 +90,21 @@ class ES_Stock_Sync {
         ) );
 
         if ( is_wp_error( $response ) ) {
+            $this->last_error = 'HTTP error: ' . $response->get_error_message();
             return false;
         }
 
+        $code = wp_remote_retrieve_response_code( $response );
         $body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+        if ( $code >= 400 ) {
+            $msg = $body['message'] ?? $body['exc'] ?? wp_remote_retrieve_body( $response );
+            $this->last_error = 'ERPNext returned HTTP ' . $code . ': ' . substr( $msg, 0, 200 );
+            return false;
+        }
+
         if ( ! isset( $body['data'] ) || ! is_array( $body['data'] ) ) {
+            $this->last_error = 'Unexpected response from ERPNext (no "data" key).';
             return false;
         }
 
