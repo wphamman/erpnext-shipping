@@ -73,7 +73,7 @@ class ES_Admin_Page {
                 }
 
                 // Generate stable ID from name if not already set.
-                $id = sanitize_title( $loc['id'] ?? $name );
+                $id = ! empty( $loc['id'] ) ? sanitize_title( $loc['id'] ) : sanitize_title( $name );
 
                 $erp_wh_raw = $loc['erp_warehouses'] ?? array();
                 $erp_warehouses = array();
