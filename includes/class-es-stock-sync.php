@@ -203,17 +203,29 @@ class ES_Stock_Sync {
             $updated++;
         }
 
-        // Zero out SLW meta for items that had stock in the previous sync but are
-        // now depleted (not present in $stock because ERPNext filter is actual_qty > 0).
+        // Zero out items that had stock in the previous sync but are now depleted
+        // (not present in $stock because ERPNext filter is actual_qty > 0).
         $depleted = array_diff_key( $prev_stock, $stock );
         foreach ( $depleted as $item_code => $old_qtys ) {
             $product_id = wc_get_product_id_by_sku( $item_code );
             if ( ! $product_id ) {
                 continue;
             }
+
+            // Zero out all SLW location meta.
             foreach ( $map as $loc_id => $term_id ) {
                 update_post_meta( $product_id, '_stock_at_' . $term_id, 0 );
             }
+
+            // Update WC main stock to 0 and mark as out of stock.
+            $product = wc_get_product( $product_id );
+            if ( $product && $product->managing_stock() ) {
+                wc_update_product_stock( $product_id, 0 );
+                $product->set_stock_status( 'outofstock' );
+                $product->save();
+            }
+
+            $updated++;
         }
 
         return $updated;
