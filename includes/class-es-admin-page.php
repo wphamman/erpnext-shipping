@@ -97,6 +97,7 @@ class ES_Admin_Page {
                     'country'        => sanitize_text_field( $loc['country'] ?? 'ZA' ),
                     'erp_warehouses' => $erp_warehouses,
                     'slw_term_id'    => intval( $loc['slw_term_id'] ?? 0 ),
+                    'pickup_enabled' => ! empty( $loc['pickup_enabled'] ),
                 );
             }
         }
@@ -142,6 +143,29 @@ class ES_Admin_Page {
         // No free shipping classes (comma-separated text).
         if ( isset( $_POST['no_free_shipping_classes'] ) ) {
             $opts['no_free_shipping_classes'] = sanitize_text_field( wp_unslash( $_POST['no_free_shipping_classes'] ) );
+        }
+
+        // Fulfillment mode.
+        if ( isset( $_POST['es_fulfillment_mode'] ) ) {
+            $mode = sanitize_text_field( wp_unslash( $_POST['es_fulfillment_mode'] ) );
+            if ( in_array( $mode, array( 'migration', 'active' ), true ) ) {
+                $prev_mode = get_option( 'es_fulfillment_mode', 'migration' );
+                update_option( 'es_fulfillment_mode', $mode );
+
+                // Side effects when switching modes.
+                if ( 'active' === $mode && 'active' !== $prev_mode ) {
+                    // Enable AST compat flag so woocommerce_fusion reads tracking meta.
+                    update_option( 'wc_plugin_advanced_shipment_tracking', 'yes' );
+                    // Schedule fulfillment cron if not already scheduled.
+                    if ( ! wp_next_scheduled( 'es_fulfillment_tracking_poll' ) ) {
+                        wp_schedule_event( time(), 'es_every_15_min', 'es_fulfillment_tracking_poll' );
+                    }
+                } elseif ( 'migration' === $mode && 'migration' !== $prev_mode ) {
+                    // Leave wc_plugin_advanced_shipment_tracking alone — AST Pro owns it in migration mode.
+                    // Unschedule fulfillment cron (old plugins handle their own polling).
+                    wp_clear_scheduled_hook( 'es_fulfillment_tracking_poll' );
+                }
+            }
         }
 
         update_option( $this->option_key, $opts );
@@ -326,6 +350,32 @@ class ES_Admin_Page {
                 <p class="submit">
                     <input type="submit" name="es_shipping_save" class="button button-primary" value="<?php esc_attr_e( 'Save Settings', 'erpnext-shipping' ); ?>">
                 </p>
+
+                <!-- Fulfillment Module -->
+                <div class="card" style="max-width:800px; margin-bottom:20px; padding:15px 20px;">
+                    <h2><?php esc_html_e( 'Fulfillment Module', 'erpnext-shipping' ); ?></h2>
+                    <p class="description"><?php esc_html_e( 'Order tracking, status management, courier polling, and email notifications.', 'erpnext-shipping' ); ?></p>
+
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'Mode', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <?php $current_mode = get_option( 'es_fulfillment_mode', 'migration' ); ?>
+                                <label>
+                                    <input type="radio" name="es_fulfillment_mode" value="migration" <?php checked( $current_mode, 'migration' ); ?>>
+                                    <?php esc_html_e( 'Migration — Only register order statuses (safe to run alongside AST Pro / TrackShip / Local Pickup Pro)', 'erpnext-shipping' ); ?>
+                                </label><br><br>
+                                <label>
+                                    <input type="radio" name="es_fulfillment_mode" value="active" <?php checked( $current_mode, 'active' ); ?>>
+                                    <?php esc_html_e( 'Active — Full fulfillment (tracking, emails, courier polling, admin UI)', 'erpnext-shipping' ); ?>
+                                </label>
+                                <p class="description" style="margin-top:10px;">
+                                    <?php esc_html_e( 'Start in Migration mode. Switch to Active only after deactivating AST Pro, TrackShip, and Local Pickup Pro.', 'erpnext-shipping' ); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
             </form>
         </div>
 
@@ -436,6 +486,10 @@ class ES_Admin_Page {
                             '<p class="description" style="margin-top:4px;">List all ERPNext warehouses that ship from this location. Stock from these warehouses will be combined when determining if this location can fulfill an order.</p></div>' +
                             '<div><label>SLW Term ID (optional)</label><input type="number" class="es-loc-slw-term small-text" value="' + (loc.slw_term_id || '') + '" min="0" placeholder="Optional">' +
                             '<p class="description" style="margin-top:4px;">If using Stock Locations for WooCommerce, create the location there first, then copy its term ID here. Find it under Products &gt; Stock Locations.</p></div>' +
+                            '<div><label>' +
+                            '<input type="checkbox" name="" class="es-pickup-enabled" ' + (loc.pickup_enabled ? 'checked' : '') + '> ' +
+                            '<?php esc_html_e( "Available for pickup", "erpnext-shipping" ); ?>' +
+                            '</label></div>' +
                         '</div>' +
                     '</div>';
                     $container.append(card);
@@ -462,6 +516,7 @@ class ES_Admin_Page {
                         country: $card.find('.es-loc-country').val().trim() || 'ZA',
                         erp_warehouses: warehouses,
                         slw_term_id: parseInt($card.find('.es-loc-slw-term').val()) || 0,
+                        pickup_enabled: $card.find('.es-pickup-enabled').is(':checked'),
                     });
                 });
                 return result;
