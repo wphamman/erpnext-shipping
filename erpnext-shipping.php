@@ -424,6 +424,17 @@ add_action( 'es_shipping_stock_sync', function () {
     }
 } );
 
+// Hook the fulfillment tracking poll action.
+add_action( 'es_fulfillment_tracking_poll', function () {
+    if ( ! class_exists( 'ES_Fulfillment_Tracking' ) ) {
+        require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-tracking.php';
+    }
+    if ( ! class_exists( 'ES_Fulfillment_Cron' ) ) {
+        require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-cron.php';
+    }
+    ES_Fulfillment_Cron::poll();
+} );
+
 // AJAX: manual stock sync from admin settings.
 add_action( 'wp_ajax_es_shipping_sync_stock', function () {
     check_ajax_referer( 'es_stock_sync' );
