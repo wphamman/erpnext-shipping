@@ -77,6 +77,31 @@ function es_fulfillment_init() {
     }
 }
 
+/**
+ * Register fulfillment email classes with WooCommerce.
+ * Only loads in 'active' mode.
+ */
+add_filter( 'woocommerce_email_classes', function ( $emails ) {
+    $mode = get_option( 'es_fulfillment_mode', 'migration' );
+    if ( 'active' !== $mode ) {
+        return $emails;
+    }
+
+    require_once ES_SHIPPING_PATH . 'includes/class-es-email-partially-shipped.php';
+    require_once ES_SHIPPING_PATH . 'includes/class-es-email-order-delivered.php';
+    require_once ES_SHIPPING_PATH . 'includes/class-es-email-processing-lp.php';
+    require_once ES_SHIPPING_PATH . 'includes/class-es-email-ready-pickup.php';
+    require_once ES_SHIPPING_PATH . 'includes/class-es-email-picked-up.php';
+
+    $emails['ES_Email_Partially_Shipped'] = new ES_Email_Partially_Shipped();
+    $emails['ES_Email_Order_Delivered']   = new ES_Email_Order_Delivered();
+    $emails['ES_Email_Processing_LP']     = new ES_Email_Processing_LP();
+    $emails['ES_Email_Ready_Pickup']      = new ES_Email_Ready_Pickup();
+    $emails['ES_Email_Picked_Up']         = new ES_Email_Picked_Up();
+
+    return $emails;
+} );
+
 function es_shipping_add_method( $methods ) {
     $methods['erpnext_shipping'] = 'ES_Shipping_Method';
     return $methods;
