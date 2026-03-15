@@ -57,6 +57,26 @@ function es_shipping_init() {
 }
 add_action( 'woocommerce_shipping_init', 'es_shipping_init' );
 
+/**
+ * Fulfillment module — loads on init (not shipping_init).
+ * Statuses always load. Other components only load in 'active' mode.
+ */
+add_action( 'init', 'es_fulfillment_init' );
+function es_fulfillment_init() {
+    if ( ! class_exists( 'WooCommerce' ) ) {
+        return;
+    }
+
+    require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-statuses.php';
+
+    $mode = get_option( 'es_fulfillment_mode', 'migration' );
+    if ( 'active' === $mode ) {
+        require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-tracking.php';
+        require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-admin.php';
+        require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-cron.php';
+    }
+}
+
 function es_shipping_add_method( $methods ) {
     $methods['erpnext_shipping'] = 'ES_Shipping_Method';
     return $methods;
@@ -312,18 +332,42 @@ function es_shipping_activate() {
     if ( ! wp_next_scheduled( 'es_shipping_stock_sync' ) ) {
         wp_schedule_event( time(), 'es_every_15_min', 'es_shipping_stock_sync' );
     }
+    // Fulfillment cron + AST compat option (only if active mode).
+    $mode = get_option( 'es_fulfillment_mode', 'migration' );
+    if ( 'active' === $mode ) {
+        if ( ! wp_next_scheduled( 'es_fulfillment_tracking_poll' ) ) {
+            wp_schedule_event( time(), 'es_every_15_min', 'es_fulfillment_tracking_poll' );
+        }
+        update_option( 'wc_plugin_advanced_shipment_tracking', 'yes' );
+    }
 }
 register_activation_hook( __FILE__, 'es_shipping_activate' );
 
 function es_shipping_deactivate() {
     wp_clear_scheduled_hook( 'es_shipping_stock_sync' );
+    wp_clear_scheduled_hook( 'es_fulfillment_tracking_poll' );
 }
 register_deactivation_hook( __FILE__, 'es_shipping_deactivate' );
 
 // Self-healing: re-schedule cron if it went missing.
 add_action( 'admin_init', function () {
+    // Stock sync — always scheduled.
     if ( ! wp_next_scheduled( 'es_shipping_stock_sync' ) ) {
         wp_schedule_event( time(), 'es_every_15_min', 'es_shipping_stock_sync' );
+    }
+
+    // Fulfillment cron — managed by mode.
+    $mode = get_option( 'es_fulfillment_mode', 'migration' );
+    if ( 'active' === $mode ) {
+        if ( ! wp_next_scheduled( 'es_fulfillment_tracking_poll' ) ) {
+            wp_schedule_event( time(), 'es_every_15_min', 'es_fulfillment_tracking_poll' );
+        }
+        update_option( 'wc_plugin_advanced_shipment_tracking', 'yes' );
+    } else {
+        // Migration mode — clear fulfillment cron if scheduled.
+        if ( wp_next_scheduled( 'es_fulfillment_tracking_poll' ) ) {
+            wp_clear_scheduled_hook( 'es_fulfillment_tracking_poll' );
+        }
     }
 } );
 
