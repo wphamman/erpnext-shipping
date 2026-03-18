@@ -147,6 +147,40 @@ class ES_Fulfillment_Statuses {
     public static function get_custom_statuses() {
         return self::$custom_statuses;
     }
+
+    /**
+     * Resolve pickup location ID — checks our meta first, then falls back to
+     * Zorem Local Pickup Pro's meta for in-flight orders that existed before cutover.
+     * If a Zorem ID is found, it is migrated to our meta key for future lookups.
+     */
+    public static function resolve_pickup_location( $order ) {
+        $loc_id = $order->get_meta( '_es_pickup_location_id', true );
+        if ( ! empty( $loc_id ) ) {
+            return $loc_id;
+        }
+
+        // Zorem Local Pickup Pro stores location ID in these meta keys.
+        $zorem_loc = $order->get_meta( 'alp_automation_location_id', true );
+        if ( empty( $zorem_loc ) ) {
+            $zorem_loc = $order->get_meta( 'alp_location_ids', true );
+        }
+
+        if ( ! empty( $zorem_loc ) ) {
+            // Map Zorem location ID to our location ID.
+            // Zorem uses WP term IDs; our locations have slw_term_id fields.
+            $locations = get_option( 'es_shipping_locations', array() );
+            foreach ( $locations as $loc ) {
+                if ( ! empty( $loc['slw_term_id'] ) && (string) $loc['slw_term_id'] === (string) $zorem_loc ) {
+                    // Persist migration so we don't repeat this lookup.
+                    $order->update_meta_data( '_es_pickup_location_id', $loc['id'] );
+                    $order->save();
+                    return $loc['id'];
+                }
+            }
+        }
+
+        return '';
+    }
 }
 
 ES_Fulfillment_Statuses::init();

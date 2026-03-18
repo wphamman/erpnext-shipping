@@ -24,7 +24,7 @@ class ES_Email_Picked_Up extends WC_Email {
         if ( ! $order ) { return; }
 
         // Resolve pickup location — our meta first, then Zorem fallback for in-flight orders.
-        $pickup_loc = ES_Email_Ready_Pickup::resolve_pickup_location( $order );
+        $pickup_loc = ES_Fulfillment_Statuses::resolve_pickup_location( $order );
         if ( empty( $pickup_loc ) ) {
             $this->restore_locale();
             return;
