@@ -127,8 +127,12 @@ class ES_Fulfillment_Cron {
                 continue;
             }
 
-            $best_wc_status  = null;
-            $best_raw_status = null;
+            // Collect per-item statuses. For multi-parcel orders, we use the
+            // LOWEST status across all items (every parcel must reach a level
+            // before the order advances). This prevents a partially-shipped
+            // order from jumping to delivered when only one parcel arrives.
+            $item_statuses   = array();
+            $raw_statuses    = array();
 
             foreach ( $items as $item ) {
                 $provider = $item['tracking_provider'] ?? '';
@@ -147,27 +151,37 @@ class ES_Fulfillment_Cron {
                 }
 
                 if ( $result ) {
-                    if ( $result['wc_status'] && self::is_higher_priority( $result['wc_status'], $best_wc_status ) ) {
-                        $best_wc_status  = $result['wc_status'];
-                        $best_raw_status = $result['raw'];
-                    } elseif ( ! $best_raw_status ) {
-                        // If no WC mapping yet, still capture the raw status for diagnostics.
-                        $best_raw_status = $result['raw'];
+                    $raw_statuses[] = $result['raw'];
+                    if ( $result['wc_status'] ) {
+                        $item_statuses[] = $result['wc_status'];
                     }
                 }
             }
 
-            // Store raw courier status for admin display / debugging.
-            if ( $best_raw_status ) {
-                $order->update_meta_data( '_es_courier_status', $best_raw_status );
+            // Store raw courier statuses for admin display / debugging.
+            if ( ! empty( $raw_statuses ) ) {
+                $order->update_meta_data( '_es_courier_status', implode( ', ', $raw_statuses ) );
             }
 
-            // Update order status if we have a higher-priority status.
-            if ( $best_wc_status ) {
+            // Determine the effective order status: the LOWEST across all polled items.
+            // Only advance if every tracking item returned a mapped WC status.
+            if ( ! empty( $item_statuses ) && count( $item_statuses ) === count( $items ) ) {
+                // Find the minimum priority status across all items.
+                $effective_status = $item_statuses[0];
+                $min_priority     = self::$status_priority[ $effective_status ] ?? 0;
+
+                foreach ( $item_statuses as $s ) {
+                    $p = self::$status_priority[ $s ] ?? 0;
+                    if ( $p < $min_priority ) {
+                        $min_priority     = $p;
+                        $effective_status = $s;
+                    }
+                }
+
                 $current = $order->get_status();
-                if ( self::is_higher_priority( $best_wc_status, $current ) ) {
+                if ( self::is_higher_priority( $effective_status, $current ) ) {
                     $order->update_status(
-                        $best_wc_status,
+                        $effective_status,
                         sprintf( __( 'Auto-updated by courier tracking poll.', 'erpnext-shipping' ) )
                     );
                 }

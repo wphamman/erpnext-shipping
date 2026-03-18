@@ -23,8 +23,8 @@ class ES_Email_Picked_Up extends WC_Email {
         if ( ! $order ) { $order = wc_get_order( $order_id ); }
         if ( ! $order ) { return; }
 
-        // Suppress if no pickup location.
-        $pickup_loc = $order->get_meta( '_es_pickup_location_id', true );
+        // Resolve pickup location — our meta first, then Zorem fallback for in-flight orders.
+        $pickup_loc = ES_Email_Ready_Pickup::resolve_pickup_location( $order );
         if ( empty( $pickup_loc ) ) {
             $this->restore_locale();
             return;

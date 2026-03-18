@@ -23,8 +23,8 @@ class ES_Email_Ready_Pickup extends WC_Email {
         if ( ! $order ) { $order = wc_get_order( $order_id ); }
         if ( ! $order ) { return; }
 
-        // Suppress if no pickup location is set.
-        $pickup_loc = $order->get_meta( '_es_pickup_location_id', true );
+        // Resolve pickup location — our meta first, then Zorem fallback for in-flight orders.
+        $pickup_loc = self::resolve_pickup_location( $order );
         if ( empty( $pickup_loc ) ) {
             $this->restore_locale();
             return;
@@ -61,6 +61,40 @@ class ES_Email_Ready_Pickup extends WC_Email {
         $this->render_pickup_address( $order, true );
         echo "\n" . esc_html__( 'Please bring your order confirmation or ID when collecting.', 'erpnext-shipping' ) . "\n";
         return ob_get_clean();
+    }
+
+    /**
+     * Resolve pickup location ID — checks our meta first, then falls back to
+     * Zorem Local Pickup Pro's meta for in-flight orders that existed before cutover.
+     * If a Zorem ID is found, it is migrated to our meta key for future lookups.
+     */
+    public static function resolve_pickup_location( $order ) {
+        $loc_id = $order->get_meta( '_es_pickup_location_id', true );
+        if ( ! empty( $loc_id ) ) {
+            return $loc_id;
+        }
+
+        // Zorem Local Pickup Pro stores location ID in these meta keys.
+        $zorem_loc = $order->get_meta( 'alp_automation_location_id', true );
+        if ( empty( $zorem_loc ) ) {
+            $zorem_loc = $order->get_meta( 'alp_location_ids', true );
+        }
+
+        if ( ! empty( $zorem_loc ) ) {
+            // Map Zorem location ID to our location ID.
+            // Zorem uses WP term IDs; our locations have slw_term_id fields.
+            $locations = get_option( 'es_shipping_locations', array() );
+            foreach ( $locations as $loc ) {
+                if ( ! empty( $loc['slw_term_id'] ) && (string) $loc['slw_term_id'] === (string) $zorem_loc ) {
+                    // Persist migration so we don't repeat this lookup.
+                    $order->update_meta_data( '_es_pickup_location_id', $loc['id'] );
+                    $order->save();
+                    return $loc['id'];
+                }
+            }
+        }
+
+        return '';
     }
 
     private function render_pickup_address( $order, $plain = false ) {

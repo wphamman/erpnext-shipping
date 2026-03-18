@@ -388,7 +388,8 @@ class ES_Fulfillment_Admin {
             return;
         }
 
-        $pickup_loc = $order->get_meta( '_es_pickup_location_id', true );
+        // Use the shared resolver which also checks Zorem meta for in-flight orders.
+        $pickup_loc = ES_Email_Ready_Pickup::resolve_pickup_location( $order );
         if ( empty( $pickup_loc ) ) {
             echo '<div class="notice notice-warning"><p>';
             esc_html_e( 'Pickup location not set — customer will not receive pickup notifications until a location is selected.', 'erpnext-shipping' );
