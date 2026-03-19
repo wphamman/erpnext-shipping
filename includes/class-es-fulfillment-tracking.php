@@ -231,7 +231,15 @@ class ES_Fulfillment_Tracking {
             return new WP_Error( 'not_found', 'Tracking entry not found', array( 'status' => 404 ) );
         }
 
-        $order->update_meta_data( self::META_KEY, array_values( $items ) );
+        $remaining = array_values( $items );
+        if ( empty( $remaining ) ) {
+            // Remove meta entirely so NOT EXISTS filters and cron queries work correctly.
+            $order->delete_meta_data( self::META_KEY );
+            $order->delete_meta_data( '_es_courier_status' );
+            $order->delete_meta_data( '_es_last_polled' );
+        } else {
+            $order->update_meta_data( self::META_KEY, $remaining );
+        }
         $order->save();
 
         return rest_ensure_response( array( 'message' => 'Tracking entry deleted' ) );

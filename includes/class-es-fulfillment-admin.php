@@ -250,6 +250,17 @@ class ES_Fulfillment_Admin {
             wp_die( 'Invalid status.' );
         }
 
+        // Block pickup status changes if no pickup location is set — the email
+        // class silently bails without a location, leaving the customer uninformed.
+        if ( in_array( $new_status, array( 'ready-pickup', 'pickup' ), true ) ) {
+            $pickup_loc = ES_Fulfillment_Statuses::resolve_pickup_location( $order );
+            if ( empty( $pickup_loc ) ) {
+                // Redirect to order edit so admin can set the pickup location first.
+                wp_safe_redirect( $order->get_edit_order_url() . '&es_notice=pickup_location_required' );
+                exit;
+            }
+        }
+
         $labels = array(
             'completed'         => 'Shipped',
             'ready-pickup'      => 'Ready for Pickup',
@@ -752,7 +763,15 @@ class ES_Fulfillment_Admin {
             wp_send_json_error( 'Tracking entry not found.' );
         }
 
-        $order->update_meta_data( ES_Fulfillment_Tracking::META_KEY, array_values( $items ) );
+        $remaining = array_values( $items );
+        if ( empty( $remaining ) ) {
+            // Remove meta entirely so NOT EXISTS filters and cron queries work correctly.
+            $order->delete_meta_data( ES_Fulfillment_Tracking::META_KEY );
+            $order->delete_meta_data( '_es_courier_status' );
+            $order->delete_meta_data( '_es_last_polled' );
+        } else {
+            $order->update_meta_data( ES_Fulfillment_Tracking::META_KEY, $remaining );
+        }
         $order->save();
 
         wp_send_json_success( 'Tracking deleted.' );
@@ -813,6 +832,14 @@ class ES_Fulfillment_Admin {
 
         $pickup_statuses = array( 'processing-lp', 'ready-pickup', 'pickup' );
         if ( ! in_array( $order->get_status(), $pickup_statuses, true ) ) {
+            return;
+        }
+
+        // Show error if redirected from a blocked quick action.
+        if ( isset( $_GET['es_notice'] ) && 'pickup_location_required' === $_GET['es_notice'] ) {
+            echo '<div class="notice notice-error"><p>';
+            esc_html_e( 'Cannot change status — please set a pickup location first. Without it, the customer will not receive a notification email.', 'erpnext-shipping' );
+            echo '</p></div>';
             return;
         }
 
