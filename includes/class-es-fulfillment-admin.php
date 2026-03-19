@@ -174,6 +174,10 @@ class ES_Fulfillment_Admin {
         $status   = $order->get_status();
         $edit_url = $order->get_edit_order_url();
 
+        // Remove WooCommerce core "Complete" action — we replace it with
+        // flow-aware actions (Mark as Shipped, Ready for Pickup, etc.).
+        unset( $actions['complete'] );
+
         // Delivery flow.
         if ( 'processing' === $status ) {
             $actions['es_mark_shipped'] = array(
