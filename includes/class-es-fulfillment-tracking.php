@@ -52,6 +52,16 @@ class ES_Fulfillment_Tracking {
                 'permission_callback' => array( __CLASS__, 'check_write_permission' ),
             ),
         ) );
+
+        // Providers list — AST Pro serves this at /orders/{any}/shipment-trackings/providers.
+        // woocommerce_fusion calls it on validate to populate the provider dropdown.
+        register_rest_route( 'wc-shipment-tracking/v3', '/orders/(?P<order_id>\d+)/shipment-trackings/providers', array(
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( __CLASS__, 'get_providers_rest' ),
+                'permission_callback' => array( __CLASS__, 'check_read_permission' ),
+            ),
+        ) );
     }
 
     /**
@@ -135,6 +145,23 @@ class ES_Fulfillment_Tracking {
 
         // Check the key has the required permission level.
         return in_array( $key->permissions, $allowed_perms, true );
+    }
+
+    /**
+     * GET: Return available shipping providers.
+     * Format matches AST Pro: { "Region": { "Provider Name": "tracking_url" } }
+     * woocommerce_fusion parses this to populate its provider dropdown.
+     */
+    public static function get_providers_rest( $request ) {
+        $result = array(
+            'South Africa' => array(),
+        );
+        foreach ( self::$providers as $slug => $data ) {
+            // Convert sprintf-style URL (%s) to AST-style (%number%).
+            $url = str_replace( '%s', '%number%', $data['url'] );
+            $result['South Africa'][ $data['name'] ] = $url;
+        }
+        return rest_ensure_response( $result );
     }
 
     /**
