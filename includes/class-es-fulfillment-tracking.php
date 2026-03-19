@@ -28,40 +28,44 @@ class ES_Fulfillment_Tracking {
     }
 
     /**
-     * Register the AST-compatible REST endpoint.
-     * Namespace matches AST Pro so woocommerce_fusion doesn't need changes.
+     * Register AST-compatible REST endpoints under BOTH namespaces.
+     * - wc/v3: used by woocommerce_fusion (its wc_api client prepends wc/v3/)
+     * - wc-shipment-tracking/v3: used by AST Pro's own clients
      */
     public static function register_rest_routes() {
-        register_rest_route( 'wc-shipment-tracking/v3', '/orders/(?P<order_id>\d+)/shipment-trackings', array(
-            array(
-                'methods'             => 'GET',
-                'callback'            => array( __CLASS__, 'get_trackings' ),
-                'permission_callback' => array( __CLASS__, 'check_read_permission' ),
-            ),
-            array(
-                'methods'             => 'POST',
-                'callback'            => array( __CLASS__, 'add_tracking' ),
-                'permission_callback' => array( __CLASS__, 'check_write_permission' ),
-            ),
-        ) );
+        $namespaces = array( 'wc/v3', 'wc-shipment-tracking/v3' );
 
-        register_rest_route( 'wc-shipment-tracking/v3', '/orders/(?P<order_id>\d+)/shipment-trackings/(?P<tracking_id>[a-f0-9]+)', array(
-            array(
-                'methods'             => 'DELETE',
-                'callback'            => array( __CLASS__, 'delete_tracking' ),
-                'permission_callback' => array( __CLASS__, 'check_write_permission' ),
-            ),
-        ) );
+        foreach ( $namespaces as $ns ) {
+            register_rest_route( $ns, '/orders/(?P<order_id>\d+)/shipment-trackings', array(
+                array(
+                    'methods'             => 'GET',
+                    'callback'            => array( __CLASS__, 'get_trackings' ),
+                    'permission_callback' => array( __CLASS__, 'check_read_permission' ),
+                ),
+                array(
+                    'methods'             => 'POST',
+                    'callback'            => array( __CLASS__, 'add_tracking' ),
+                    'permission_callback' => array( __CLASS__, 'check_write_permission' ),
+                ),
+            ) );
 
-        // Providers list — AST Pro serves this at /orders/{any}/shipment-trackings/providers.
-        // woocommerce_fusion calls it on validate to populate the provider dropdown.
-        register_rest_route( 'wc-shipment-tracking/v3', '/orders/(?P<order_id>\d+)/shipment-trackings/providers', array(
-            array(
-                'methods'             => 'GET',
-                'callback'            => array( __CLASS__, 'get_providers_rest' ),
-                'permission_callback' => array( __CLASS__, 'check_read_permission' ),
-            ),
-        ) );
+            register_rest_route( $ns, '/orders/(?P<order_id>\d+)/shipment-trackings/(?P<tracking_id>[a-f0-9]+)', array(
+                array(
+                    'methods'             => 'DELETE',
+                    'callback'            => array( __CLASS__, 'delete_tracking' ),
+                    'permission_callback' => array( __CLASS__, 'check_write_permission' ),
+                ),
+            ) );
+
+            // Providers list — woocommerce_fusion calls this on validate.
+            register_rest_route( $ns, '/orders/(?P<order_id>\d+)/shipment-trackings/providers', array(
+                array(
+                    'methods'             => 'GET',
+                    'callback'            => array( __CLASS__, 'get_providers_rest' ),
+                    'permission_callback' => array( __CLASS__, 'check_read_permission' ),
+                ),
+            ) );
+        }
     }
 
     /**
