@@ -453,6 +453,17 @@ class ES_Fulfillment_Tracking {
             return;
         }
         ?>
+        <?php
+        // Determine order-level status for display below the table.
+        $courier_status = $order->get_meta( '_es_courier_status', true );
+        if ( $courier_status ) {
+            $status_label = self::format_courier_status( $courier_status );
+        } else {
+            $status_label = 'delivered' === $order->get_status()
+                ? __( 'Delivered', 'erpnext-shipping' )
+                : __( 'Shipped', 'erpnext-shipping' );
+        }
+        ?>
         <h2><?php esc_html_e( 'Shipment Tracking', 'erpnext-shipping' ); ?></h2>
         <table class="woocommerce-table shop_table es-tracking-table">
             <thead>
@@ -460,7 +471,6 @@ class ES_Fulfillment_Tracking {
                     <th><?php esc_html_e( 'Carrier', 'erpnext-shipping' ); ?></th>
                     <th><?php esc_html_e( 'Tracking Number', 'erpnext-shipping' ); ?></th>
                     <th><?php esc_html_e( 'Shipped', 'erpnext-shipping' ); ?></th>
-                    <th><?php esc_html_e( 'Status', 'erpnext-shipping' ); ?></th>
                 </tr>
             </thead>
             <tbody>
@@ -479,25 +489,14 @@ class ES_Fulfillment_Tracking {
                         <?php endif; ?>
                     </td>
                     <td><?php echo esc_html( $date ); ?></td>
-                    <td>
-                        <?php
-                        $courier_status = $order->get_meta( '_es_courier_status', true );
-                        if ( $courier_status ) {
-                            echo esc_html( self::format_courier_status( $courier_status ) );
-                        } else {
-                            $order_status = $order->get_status();
-                            if ( 'delivered' === $order_status ) {
-                                esc_html_e( 'Delivered', 'erpnext-shipping' );
-                            } else {
-                                esc_html_e( 'Shipped', 'erpnext-shipping' );
-                            }
-                        }
-                        ?>
-                    </td>
                 </tr>
                 <?php endforeach; ?>
             </tbody>
         </table>
+        <p style="margin-top:8px;">
+            <strong><?php esc_html_e( 'Status:', 'erpnext-shipping' ); ?></strong>
+            <?php echo esc_html( $status_label ); ?>
+        </p>
         <?php
     }
 
