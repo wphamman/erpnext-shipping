@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.1] - 2026-03-23
+
+### Fixed
+- Legacy provider slugs (`collivery`, `the-courier-guy-sa`) from AST Pro now render with correct display names and clickable tracking links in emails.
+
+## [1.6.0] - 2026-03-23
+
+### Added
+- **Tracking info in emails**: Shipment tracking section injected into Shipped, Partially Shipped, Delivered, and Invoice customer emails. Shows carrier name, clickable tracking number (links to carrier tracking page), and ship date. Both HTML and plain text formats.
+
 ## [1.5.3] - 2026-03-23
 
 ### Fixed
