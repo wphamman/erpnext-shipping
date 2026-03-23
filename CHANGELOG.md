@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.1] - 2026-03-23
+
+### Fixed
+- Pickup status button URL in meta box was broken — nonce and new_status were concatenated instead of separate parameters.
+- Customer message field now renders in the Ready for Pickup email (HTML and plain text).
+
+### Changed
+- Updated CLAUDE.md, README.md with full fulfillment module documentation.
+
 ## [1.5.0] - 2026-03-23
 
 ### Added
