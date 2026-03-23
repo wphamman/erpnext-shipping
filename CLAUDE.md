@@ -124,8 +124,10 @@ erpnext-shipping/
 - Quick tracking modal uses a generic nonce (not per-order) since it operates from the order list
 - Waybill validation: TCG = alphanumeric, Collivery = 7-digit numeric
 - Pickup status changes are blocked server-side if no pickup location is set
-- Email tracking: hooks `woocommerce_email_order_details` to inject tracking section into Shipped/Delivered/Invoice emails
+- Email tracking: hooks `woocommerce_email_order_details` to inject tracking into WC core emails (Shipped, Invoice). Our own emails (Partially Shipped, Delivered) render tracking inline via templates to avoid duplication.
+- Email templates: all 6 fulfillment emails use `wc_get_template_html()` with files in `templates/emails/`. Override via `yourtheme/woocommerce/emails/`. Subject and heading customizable in WC Settings > Emails.
 - Legacy provider aliases: `collivery` and `the-courier-guy-sa` map to the same tracking URLs as their modern equivalents
+- Pickup flow: Processing LP → Dispatched to Pickup → Ready for Pickup → Picked Up (4 steps)
 
 ## Security Checklist
 - [ ] No hardcoded credentials or API keys

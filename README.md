@@ -25,7 +25,8 @@ Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routin
 - **Quick tracking modal** — add carrier + tracking number from the order list without navigating away; includes shipping note and waybill validation
 - **Checkout pickup selector** — location dropdown when customer selects Local Pickup, with address display and custom messages
 - **Collection points** — pickup-only locations without ERPNext warehouse mapping (e.g. partner breweries, taprooms)
-- **Fulfillment emails** — Processing LP, Ready For Pickup (with location address + customer message), Picked Up, Partially Shipped, Delivered
+- **Fulfillment emails** — Processing LP, Dispatched to Pickup, Ready For Pickup (with location address + customer message), Picked Up, Partially Shipped, Delivered. All use WooCommerce template system — customizable via theme overrides and WC Settings > Emails.
+- **Tracking in emails** — clickable tracking links injected into Shipped and Invoice WC core emails; our own emails render tracking inline via templates
 
 ## Requirements
 
@@ -162,8 +163,19 @@ erpnext-shipping/
 │   ├── class-es-email-partially-shipped.php
 │   ├── class-es-email-order-delivered.php
 │   ├── class-es-email-processing-lp.php
+│   ├── class-es-email-dispatched-pickup.php
 │   ├── class-es-email-ready-pickup.php
 │   └── class-es-email-picked-up.php
+├── templates/
+│   └── emails/                              # WC email templates (theme-overridable)
+│       ├── es-processing-lp.php
+│       ├── es-dispatched-pickup.php
+│       ├── es-ready-pickup.php
+│       ├── es-picked-up.php
+│       ├── es-partially-shipped.php
+│       ├── es-order-delivered.php
+│       └── plain/                           # Plain text versions
+│           └── (same filenames)
 ├── README.md
 ├── LICENSE
 ├── CHANGELOG.md

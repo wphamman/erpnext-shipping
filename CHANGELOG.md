@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.1] - 2026-03-23
+
+### Fixed
+- Partially Shipped and Delivered emails no longer show tracking info twice (template + hook duplication removed).
+
+## [1.9.0] - 2026-03-23
+
+### Changed
+- **Email template refactor**: all 6 fulfillment emails now use WooCommerce's `wc_get_template_html()` template system. Templates live in `templates/emails/` (HTML) and `templates/emails/plain/` (plain text). Users can override them by copying to `yourtheme/woocommerce/emails/`. Subject lines and headings are customizable via WooCommerce Settings > Emails.
+
 ## [1.8.2] - 2026-03-23
 
 ### Fixed
