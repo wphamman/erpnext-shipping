@@ -21,6 +21,15 @@ class ES_Fulfillment_Tracking {
             'name' => 'MDS Collivery',
             'url'  => 'https://www.collivery.co.za/tracking/%s',
         ),
+        // Legacy aliases — AST Pro stored these slugs for existing orders.
+        'collivery' => array(
+            'name' => 'Collivery',
+            'url'  => 'https://www.collivery.co.za/tracking/%s',
+        ),
+        'the-courier-guy-sa' => array(
+            'name' => 'The Courier Guy',
+            'url'  => 'https://www.thecourierguy.co.za/tracking?reference=%s',
+        ),
     );
 
     public static function init() {
