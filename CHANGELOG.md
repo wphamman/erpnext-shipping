@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.0] - 2026-03-23
+
+### Added
+- **Dispatched to Pickup status**: new step in the pickup flow between Processing LP and Ready for Pickup. Includes email notification with pickup location details and customer message.
+- **Pickup flow**: Processing LP → Dispatched to Pickup → Ready for Pickup → Picked Up.
+
+## [1.7.1] - 2026-03-23
+
+### Fixed
+- Courier status on My Account order view moved from per-shipment table rows to a single line below the table (status is order-level, not per-shipment).
+
+## [1.7.0] - 2026-03-23
+
+### Added
+- **My Account tracking**: Shipment Tracking table on customer order detail page (carrier, clickable tracking number, ship date, status). Tracking column on orders list with carrier + waybill link.
+
 ## [1.6.1] - 2026-03-23
 
 ### Fixed
