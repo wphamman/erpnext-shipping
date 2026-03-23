@@ -103,7 +103,8 @@ class ES_Admin_Page {
                     'country'        => sanitize_text_field( $loc['country'] ?? 'ZA' ),
                     'erp_warehouses' => $erp_warehouses,
                     'slw_term_id'    => intval( $loc['slw_term_id'] ?? 0 ),
-                    'pickup_enabled' => 'collection_point' === $loc_type ? true : ! empty( $loc['pickup_enabled'] ),
+                    'pickup_enabled'   => 'collection_point' === $loc_type ? true : ! empty( $loc['pickup_enabled'] ),
+                    'customer_message' => sanitize_textarea_field( $loc['customer_message'] ?? '' ),
                 );
             }
         }
@@ -503,6 +504,8 @@ class ES_Admin_Page {
                             '<input type="checkbox" name="" class="es-pickup-enabled" ' + (loc.pickup_enabled || isCP ? 'checked' : '') + (isCP ? ' disabled' : '') + '> ' +
                             '<?php esc_html_e( "Available for pickup", "erpnext-shipping" ); ?>' +
                             '</label></div>' +
+                            '<div class="es-full-width"><label>Customer Message (optional)</label><textarea class="es-loc-customer-msg" rows="2" placeholder="e.g. Allow 5 business days for delivery to this location">' + escAttr(loc.customer_message || '') + '</textarea>' +
+                            '<p class="description" style="margin-top:4px;">Shown at checkout when this location is selected for pickup, and in the Ready for Pickup email.</p></div>' +
                         '</div>' +
                     '</div>';
                     $container.append(card);
@@ -534,6 +537,7 @@ class ES_Admin_Page {
                         // migration fallback maps old pickup orders via this field.
                         slw_term_id: parseInt($card.find('.es-loc-slw-term').val()) || (locations[idx] && locations[idx].slw_term_id) || 0,
                         pickup_enabled: locType === 'collection_point' ? true : $card.find('.es-pickup-enabled').is(':checked'),
+                        customer_message: $card.find('.es-loc-customer-msg').val().trim(),
                     });
                 });
                 return result;

@@ -508,7 +508,11 @@ class ES_Fulfillment_Admin {
                 </select>
                 <label><?php esc_html_e( 'Tracking Number', 'erpnext-shipping' ); ?></label>
                 <input type="text" id="es-modal-tracking" placeholder="e.g. TCG100042593T">
+                <div id="es-modal-waybill-warning" style="display:none; background:#fff3cd; border:1px solid #ffc107; border-radius:4px; padding:8px 10px; margin-top:6px; font-size:12px; color:#856404;"></div>
+                <label><?php esc_html_e( 'Shipping Note (optional)', 'erpnext-shipping' ); ?></label>
+                <input type="text" id="es-modal-note" placeholder="<?php esc_attr_e( 'Visible to customer', 'erpnext-shipping' ); ?>">
                 <input type="hidden" id="es-modal-order-id" value="">
+                <input type="hidden" id="es-modal-confirmed" value="0">
                 <div class="es-modal-actions">
                     <button type="button" class="button" id="es-modal-cancel"><?php esc_html_e( 'Cancel', 'erpnext-shipping' ); ?></button>
                     <button type="button" class="button button-primary" id="es-modal-submit"><?php esc_html_e( 'Add & Ship', 'erpnext-shipping' ); ?></button>
@@ -548,6 +552,10 @@ class ES_Fulfillment_Admin {
                 $('#es-modal-order-id').val(orderId);
                 $('#es-modal-order-label').text('#' + orderId);
                 $('#es-modal-tracking').val('');
+                $('#es-modal-note').val('');
+                $('#es-modal-confirmed').val('0');
+                $('#es-modal-waybill-warning').hide();
+                $('#es-modal-submit').text('<?php echo esc_js( __( 'Add & Ship', 'erpnext-shipping' ) ); ?>');
                 $modal.addClass('active');
                 setTimeout(function() { $('#es-modal-tracking').focus(); }, 50);
             });
@@ -556,15 +564,56 @@ class ES_Fulfillment_Admin {
             $('#es-modal-cancel').on('click', function() { $modal.removeClass('active'); });
             $modal.on('click', function(e) { if (e.target === this) $modal.removeClass('active'); });
 
+            // Waybill validation — check carrier/number mismatch.
+            function checkWaybillMismatch() {
+                var provider = $('#es-modal-provider').val();
+                var number = $('#es-modal-tracking').val().trim();
+                var $warn = $('#es-modal-waybill-warning');
+                var $btn = $('#es-modal-submit');
+                var msg = '';
+
+                if (number.length >= 3) {
+                    var isAllDigits = /^\d+$/.test(number);
+                    var isSevenDigits = /^\d{7}$/.test(number);
+
+                    if (provider === 'the-courier-guy' && isSevenDigits) {
+                        msg = '<?php echo esc_js( __( 'This looks like a Collivery waybill (7 digits). You selected The Courier Guy.', 'erpnext-shipping' ) ); ?>';
+                    } else if (provider === 'mds-collivery' && !isAllDigits) {
+                        msg = '<?php echo esc_js( __( 'This looks like a TCG waybill (contains letters). You selected Collivery.', 'erpnext-shipping' ) ); ?>';
+                    }
+                }
+
+                if (msg) {
+                    $warn.text(msg).show();
+                    $btn.text('<?php echo esc_js( __( 'Confirm & Ship', 'erpnext-shipping' ) ); ?>');
+                    $('#es-modal-confirmed').val('0');
+                } else {
+                    $warn.hide();
+                    $btn.text('<?php echo esc_js( __( 'Add & Ship', 'erpnext-shipping' ) ); ?>');
+                    $('#es-modal-confirmed').val('1');
+                }
+            }
+
+            $('#es-modal-tracking').on('input', checkWaybillMismatch);
+            $('#es-modal-provider').on('change', checkWaybillMismatch);
+
             // Submit tracking.
             $('#es-modal-submit').on('click', function() {
                 var $btn = $(this);
                 var number = $('#es-modal-tracking').val().trim();
                 if (!number) { $('#es-modal-tracking').focus(); return; }
 
+                // If there's a mismatch warning and user hasn't confirmed yet, require a second click.
+                var $warn = $('#es-modal-waybill-warning');
+                if ($warn.is(':visible') && $('#es-modal-confirmed').val() === '0') {
+                    $('#es-modal-confirmed').val('1');
+                    $btn.text('<?php echo esc_js( __( 'Yes, Confirm & Ship', 'erpnext-shipping' ) ); ?>');
+                    return;
+                }
+
                 $btn.prop('disabled', true).text('<?php echo esc_js( __( 'Adding...', 'erpnext-shipping' ) ); ?>');
 
-                $.post(ajaxurl, {
+                var postData = {
                     action: 'es_add_tracking',
                     _ajax_nonce: '<?php echo wp_create_nonce( 'es_quick_tracking' ); ?>',
                     order_id: $('#es-modal-order-id').val(),
@@ -573,7 +622,14 @@ class ES_Fulfillment_Admin {
                     date_shipped: '<?php echo esc_js( date( 'Y-m-d' ) ); ?>',
                     custom_tracking_link: '',
                     no_status_update: 0
-                }, function(response) {
+                };
+
+                var note = $('#es-modal-note').val().trim();
+                if (note) {
+                    postData.shipping_note = note;
+                }
+
+                $.post(ajaxurl, postData, function(response) {
                     if (response.success) {
                         location.reload();
                     } else {
@@ -621,126 +677,146 @@ class ES_Fulfillment_Admin {
         $items     = ES_Fulfillment_Tracking::get_tracking_items( $order );
         $providers = ES_Fulfillment_Tracking::get_providers();
         $order_id  = $order->get_id();
+        $status    = $order->get_status();
+
+        $pickup_statuses  = array( 'processing-lp', 'ready-pickup', 'pickup' );
+        $is_pickup_order  = in_array( $status, $pickup_statuses, true );
 
         wp_nonce_field( 'es_tracking_' . $order_id, 'es_tracking_nonce' );
-        ?>
-        <div id="es-tracking-items">
-            <?php if ( ! empty( $items ) ) : ?>
-                <?php foreach ( $items as $item ) : ?>
-                    <div class="es-tracking-item" style="padding:8px 0; border-bottom:1px solid #eee;">
-                        <strong><?php echo esc_html( ES_Fulfillment_Tracking::get_provider_name( $item['tracking_provider'] ) ); ?></strong><br>
-                        <?php
-                        $url = ES_Fulfillment_Tracking::get_tracking_url( $item );
-                        if ( $url ) :
-                        ?>
-                            <a href="<?php echo esc_url( $url ); ?>" target="_blank"><?php echo esc_html( $item['tracking_number'] ); ?></a>
-                        <?php else : ?>
-                            <?php echo esc_html( $item['tracking_number'] ); ?>
-                        <?php endif; ?>
-                        <br>
-                        <small><?php echo esc_html( date_i18n( get_option( 'date_format' ), $item['date_shipped'] ) ); ?></small>
-                        <a href="#" class="es-delete-tracking" data-tracking-id="<?php echo esc_attr( $item['tracking_id'] ); ?>" data-order-id="<?php echo esc_attr( $order_id ); ?>" style="color:#a00; float:right; text-decoration:none;" title="<?php esc_attr_e( 'Delete', 'erpnext-shipping' ); ?>">&times;</a>
-                    </div>
-                <?php endforeach; ?>
-            <?php else : ?>
-                <p style="color:#999;"><?php esc_html_e( 'No tracking entries yet.', 'erpnext-shipping' ); ?></p>
-            <?php endif; ?>
-        </div>
 
-        <?php
-        // Show courier polling status if available.
-        $courier_status = $order->get_meta( '_es_courier_status', true );
-        $last_polled    = $order->get_meta( '_es_last_polled', true );
-        if ( $courier_status ) :
-            $statuses = array_map( 'trim', explode( ',', $courier_status ) );
-        ?>
-        <div style="padding:8px 0; border-bottom:1px solid #eee;">
-            <strong><?php esc_html_e( 'Courier Status', 'erpnext-shipping' ); ?></strong><br>
-            <?php foreach ( $statuses as $raw ) :
-                $label = self::$courier_status_labels[ $raw ] ?? $raw;
-                $color = self::get_status_dot_color( $raw );
-            ?>
-                <span class="es-courier-badge" style="color:<?php echo esc_attr( $color ); ?>;">
-                    <span class="es-dot" style="background:<?php echo esc_attr( $color ); ?>;"></span>
-                    <?php echo esc_html( $label ); ?>
-                </span><br>
-            <?php endforeach; ?>
-            <?php if ( $last_polled ) : ?>
-                <small style="color:#999;"><?php echo esc_html( sprintf( __( 'Last polled: %s', 'erpnext-shipping' ), date_i18n( 'M j, g:i a', $last_polled ) ) ); ?></small>
-            <?php endif; ?>
-        </div>
-        <?php endif; ?>
-
-        <hr style="margin:12px 0;">
-        <p><strong><?php esc_html_e( 'Add Tracking', 'erpnext-shipping' ); ?></strong></p>
-
-        <p>
-            <label><?php esc_html_e( 'Provider', 'erpnext-shipping' ); ?></label><br>
-            <select id="es-tracking-provider" style="width:100%;">
-                <?php foreach ( $providers as $slug => $data ) : ?>
-                    <option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $data['name'] ); ?></option>
-                <?php endforeach; ?>
-                <option value="custom"><?php esc_html_e( 'Custom', 'erpnext-shipping' ); ?></option>
-            </select>
-        </p>
-
-        <p>
-            <label><?php esc_html_e( 'Tracking Number', 'erpnext-shipping' ); ?></label><br>
-            <input type="text" id="es-tracking-number" style="width:100%;" placeholder="<?php esc_attr_e( 'e.g. TCG100042593T', 'erpnext-shipping' ); ?>">
-        </p>
-
-        <p id="es-custom-url-row" style="display:none;">
-            <label><?php esc_html_e( 'Custom Tracking URL', 'erpnext-shipping' ); ?></label><br>
-            <input type="url" id="es-custom-url" style="width:100%;">
-        </p>
-
-        <p>
-            <label><?php esc_html_e( 'Date Shipped', 'erpnext-shipping' ); ?></label><br>
-            <input type="date" id="es-date-shipped" style="width:100%;" value="<?php echo esc_attr( date( 'Y-m-d' ) ); ?>">
-        </p>
-
-        <p>
-            <label>
-                <input type="checkbox" id="es-no-status-update">
-                <?php esc_html_e( "Don't update order status", 'erpnext-shipping' ); ?>
-            </label>
-        </p>
-
-        <?php
-        // Pickup location selector (only for pickup-flow orders).
-        $pickup_statuses = array( 'processing-lp', 'ready-pickup', 'pickup' );
-        $locations       = get_option( 'es_shipping_locations', array() );
-        $pickup_locations = array_filter( $locations, function( $loc ) {
-            return ! empty( $loc['pickup_enabled'] );
-        } );
-
-        if ( ! empty( $pickup_locations ) && in_array( $order->get_status(), $pickup_statuses, true ) ) :
+        <?php if ( $is_pickup_order ) : ?>
+            <?php // ── PICKUP FLOW ── ?>
+            <?php
+            $locations       = get_option( 'es_shipping_locations', array() );
+            $pickup_locations = array_filter( $locations, function( $loc ) {
+                return ! empty( $loc['pickup_enabled'] );
+            } );
             $current_pickup_loc = $order->get_meta( '_es_pickup_location_id', true );
-        ?>
-        <hr style="margin:12px 0;">
-        <p><strong><?php esc_html_e( 'Pickup Location', 'erpnext-shipping' ); ?></strong></p>
-        <p>
-            <select id="es-pickup-location" style="width:100%;">
-                <option value=""><?php esc_html_e( '— Select pickup location —', 'erpnext-shipping' ); ?></option>
-                <?php foreach ( $pickup_locations as $loc ) : ?>
-                    <option value="<?php echo esc_attr( $loc['id'] ); ?>" <?php selected( $current_pickup_loc, $loc['id'] ); ?>>
-                        <?php echo esc_html( $loc['name'] . ' — ' . $loc['city'] ); ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-        </p>
-        <p>
-            <button type="button" class="button" id="es-save-pickup-btn" style="width:100%;">
-                <?php esc_html_e( 'Save Pickup Location', 'erpnext-shipping' ); ?>
-            </button>
-        </p>
-        <?php endif; ?>
+            ?>
 
-        <p>
-            <button type="button" class="button button-primary" id="es-add-tracking-btn" style="width:100%;">
-                <?php esc_html_e( 'Add Tracking', 'erpnext-shipping' ); ?>
-            </button>
-        </p>
+            <?php if ( ! empty( $pickup_locations ) ) : ?>
+            <p><strong><?php esc_html_e( 'Pickup Location', 'erpnext-shipping' ); ?></strong></p>
+            <p>
+                <select id="es-pickup-location" style="width:100%;">
+                    <option value=""><?php esc_html_e( '— Select pickup location —', 'erpnext-shipping' ); ?></option>
+                    <?php foreach ( $pickup_locations as $loc ) : ?>
+                        <option value="<?php echo esc_attr( $loc['id'] ); ?>" <?php selected( $current_pickup_loc, $loc['id'] ); ?>>
+                            <?php echo esc_html( $loc['name'] . ' — ' . ( $loc['city'] ?? '' ) ); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </p>
+            <p>
+                <button type="button" class="button" id="es-save-pickup-btn" style="width:100%;">
+                    <?php esc_html_e( 'Save Pickup Location', 'erpnext-shipping' ); ?>
+                </button>
+            </p>
+            <?php endif; ?>
+
+            <hr style="margin:12px 0;">
+
+            <?php // Status action buttons for pickup flow. ?>
+            <?php if ( 'processing-lp' === $status ) : ?>
+                <button type="button" class="button button-primary" id="es-pickup-status-btn" data-status="ready-pickup" style="width:100%;">
+                    <?php esc_html_e( 'Mark as Ready for Pickup', 'erpnext-shipping' ); ?>
+                </button>
+            <?php elseif ( 'ready-pickup' === $status ) : ?>
+                <button type="button" class="button button-primary" id="es-pickup-status-btn" data-status="pickup" style="width:100%;">
+                    <?php esc_html_e( 'Mark as Picked Up', 'erpnext-shipping' ); ?>
+                </button>
+            <?php endif; ?>
+
+        <?php else : ?>
+            <?php // ── DELIVERY FLOW ── ?>
+
+            <div id="es-tracking-items">
+                <?php if ( ! empty( $items ) ) : ?>
+                    <?php foreach ( $items as $item ) : ?>
+                        <div class="es-tracking-item" style="padding:8px 0; border-bottom:1px solid #eee;">
+                            <strong><?php echo esc_html( ES_Fulfillment_Tracking::get_provider_name( $item['tracking_provider'] ) ); ?></strong><br>
+                            <?php
+                            $url = ES_Fulfillment_Tracking::get_tracking_url( $item );
+                            if ( $url ) :
+                            ?>
+                                <a href="<?php echo esc_url( $url ); ?>" target="_blank"><?php echo esc_html( $item['tracking_number'] ); ?></a>
+                            <?php else : ?>
+                                <?php echo esc_html( $item['tracking_number'] ); ?>
+                            <?php endif; ?>
+                            <br>
+                            <small><?php echo esc_html( date_i18n( get_option( 'date_format' ), $item['date_shipped'] ) ); ?></small>
+                            <a href="#" class="es-delete-tracking" data-tracking-id="<?php echo esc_attr( $item['tracking_id'] ); ?>" data-order-id="<?php echo esc_attr( $order_id ); ?>" style="color:#a00; float:right; text-decoration:none;" title="<?php esc_attr_e( 'Delete', 'erpnext-shipping' ); ?>">&times;</a>
+                        </div>
+                    <?php endforeach; ?>
+                <?php else : ?>
+                    <p style="color:#999;"><?php esc_html_e( 'No tracking entries yet.', 'erpnext-shipping' ); ?></p>
+                <?php endif; ?>
+            </div>
+
+            <?php
+            // Show courier polling status if available.
+            $courier_status = $order->get_meta( '_es_courier_status', true );
+            $last_polled    = $order->get_meta( '_es_last_polled', true );
+            if ( $courier_status ) :
+                $statuses_raw = array_map( 'trim', explode( ',', $courier_status ) );
+            ?>
+            <div style="padding:8px 0; border-bottom:1px solid #eee;">
+                <strong><?php esc_html_e( 'Courier Status', 'erpnext-shipping' ); ?></strong><br>
+                <?php foreach ( $statuses_raw as $raw ) :
+                    $label = self::$courier_status_labels[ $raw ] ?? $raw;
+                    $color = self::get_status_dot_color( $raw );
+                ?>
+                    <span class="es-courier-badge" style="color:<?php echo esc_attr( $color ); ?>;">
+                        <span class="es-dot" style="background:<?php echo esc_attr( $color ); ?>;"></span>
+                        <?php echo esc_html( $label ); ?>
+                    </span><br>
+                <?php endforeach; ?>
+                <?php if ( $last_polled ) : ?>
+                    <small style="color:#999;"><?php echo esc_html( sprintf( __( 'Last polled: %s', 'erpnext-shipping' ), date_i18n( 'M j, g:i a', $last_polled ) ) ); ?></small>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+
+            <hr style="margin:12px 0;">
+            <p><strong><?php esc_html_e( 'Add Tracking', 'erpnext-shipping' ); ?></strong></p>
+
+            <p>
+                <label><?php esc_html_e( 'Provider', 'erpnext-shipping' ); ?></label><br>
+                <select id="es-tracking-provider" style="width:100%;">
+                    <?php foreach ( $providers as $slug => $data ) : ?>
+                        <option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $data['name'] ); ?></option>
+                    <?php endforeach; ?>
+                    <option value="custom"><?php esc_html_e( 'Custom', 'erpnext-shipping' ); ?></option>
+                </select>
+            </p>
+
+            <p>
+                <label><?php esc_html_e( 'Tracking Number', 'erpnext-shipping' ); ?></label><br>
+                <input type="text" id="es-tracking-number" style="width:100%;" placeholder="<?php esc_attr_e( 'e.g. TCG100042593T', 'erpnext-shipping' ); ?>">
+            </p>
+
+            <p id="es-custom-url-row" style="display:none;">
+                <label><?php esc_html_e( 'Custom Tracking URL', 'erpnext-shipping' ); ?></label><br>
+                <input type="url" id="es-custom-url" style="width:100%;">
+            </p>
+
+            <p>
+                <label><?php esc_html_e( 'Date Shipped', 'erpnext-shipping' ); ?></label><br>
+                <input type="date" id="es-date-shipped" style="width:100%;" value="<?php echo esc_attr( date( 'Y-m-d' ) ); ?>">
+            </p>
+
+            <p>
+                <label>
+                    <input type="checkbox" id="es-no-status-update">
+                    <?php esc_html_e( "Don't update order status", 'erpnext-shipping' ); ?>
+                </label>
+            </p>
+
+            <p>
+                <button type="button" class="button button-primary" id="es-add-tracking-btn" style="width:100%;">
+                    <?php esc_html_e( 'Add Tracking', 'erpnext-shipping' ); ?>
+                </button>
+            </p>
+        <?php endif; ?>
 
         <script>
         jQuery(function($) {
@@ -816,6 +892,14 @@ class ES_Fulfillment_Admin {
                     }
                 });
             });
+
+            // Pickup status action button (in meta box).
+            $('#es-pickup-status-btn').on('click', function() {
+                var $btn = $(this);
+                var newStatus = $btn.data('status');
+                $btn.prop('disabled', true).text('Updating...');
+                window.location.href = '<?php echo esc_js( wp_nonce_url( admin_url( 'admin-ajax.php?action=es_update_order_status&order_id=' . $order_id . '&new_status=' ), 'es_status_' . $order_id ) ); ?>' + newStatus;
+            });
         });
         </script>
         <?php
@@ -860,6 +944,12 @@ class ES_Fulfillment_Admin {
 
         $item = ES_Fulfillment_Tracking::create_tracking_item( $provider, $number, $date_shipped, $custom_link );
         ES_Fulfillment_Tracking::save_tracking_item( $order, $item );
+
+        // Add customer-visible shipping note if provided.
+        $shipping_note = sanitize_text_field( $_POST['shipping_note'] ?? '' );
+        if ( ! empty( $shipping_note ) ) {
+            $order->add_order_note( $shipping_note, 1 ); // 1 = customer note (visible).
+        }
 
         // Save pickup location if provided.
         $pickup_loc = sanitize_text_field( $_POST['pickup_location_id'] ?? '' );
