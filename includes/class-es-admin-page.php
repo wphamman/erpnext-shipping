@@ -503,7 +503,20 @@ class ES_Admin_Page {
                             '<div style="padding-top:8px;"><label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal;">' +
                             '<input type="checkbox" name="" class="es-pickup-enabled" ' + (loc.pickup_enabled || isCP ? 'checked' : '') + (isCP ? ' disabled' : '') + '> ' +
                             '<?php esc_html_e( "Available for pickup", "erpnext-shipping" ); ?>' +
-                            '</label></div>' +
+                            '</label>' +
+                            (function() {
+                                var addr = [loc.street, loc.suburb, loc.city].filter(Boolean).join(', ');
+                                var whCount = (loc.erp_warehouses || []).length;
+                                var hint = '';
+                                if (addr && (loc.pickup_enabled || isCP)) {
+                                    hint += '<p class="description" style="margin-top:4px;">Customers will see: <strong>' + escAttr(addr) + '</strong></p>';
+                                }
+                                if (whCount > 1 && !isCP) {
+                                    hint += '<p class="description" style="margin-top:2px; color:#d63638;">This location has ' + whCount + ' ERPNext warehouses. If they are at different addresses, create separate Collection Points for each pickup address.</p>';
+                                }
+                                return hint;
+                            })() +
+                            '</div>' +
                             '<div class="es-full-width"><label>Customer Message (optional)</label><textarea class="es-loc-customer-msg" rows="2" placeholder="e.g. Allow 5 business days for delivery to this location">' + escAttr(loc.customer_message || '') + '</textarea>' +
                             '<p class="description" style="margin-top:4px;">Shown at checkout when this location is selected for pickup, and in the Ready for Pickup email.</p></div>' +
                         '</div>' +

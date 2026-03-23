@@ -100,9 +100,14 @@ class ES_Fulfillment_Checkout {
                         $details.hide();
                     }
 
-                    // Save to session via AJAX so it persists across checkout updates.
+                    // Save to session via AJAX so it persists across cart/checkout pages.
+                    // Use woocommerce_params (available on both cart and checkout) with fallbacks.
+                    var ajaxUrl = (typeof wc_checkout_params !== 'undefined' && wc_checkout_params.ajax_url)
+                        || (typeof woocommerce_params !== 'undefined' && woocommerce_params.ajax_url)
+                        || (typeof wc_cart_params !== 'undefined' && wc_cart_params.ajax_url)
+                        || '/wp-admin/admin-ajax.php';
                     if ($(this).val()) {
-                        $.post(wc_checkout_params.ajax_url, {
+                        $.post(ajaxUrl, {
                             action: 'es_save_checkout_pickup',
                             location_id: $(this).val(),
                             _wpnonce: '<?php echo wp_create_nonce( 'es_checkout_pickup' ); ?>'
