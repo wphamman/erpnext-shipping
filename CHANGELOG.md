@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.2] - 2026-03-23
+
+### Fixed
+- Clearing the pickup dropdown back to blank now clears the WC session value (previously the old selection persisted silently).
+- Cart to checkout pickup location persistence — AJAX save now works on cart page (was only working on checkout due to missing JS variable).
+- Admin location cards show the pickup address customers will see, with a warning for multi-warehouse locations.
+
 ## [1.8.0] - 2026-03-23
 
 ### Added
