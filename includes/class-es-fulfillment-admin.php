@@ -55,6 +55,9 @@ class ES_Fulfillment_Admin {
 
         // Admin CSS and JS.
         add_action( 'admin_head', array( __CLASS__, 'admin_css' ) );
+
+        // Quick tracking modal on order list page.
+        add_action( 'admin_footer', array( __CLASS__, 'render_tracking_modal' ) );
     }
 
     // ── Custom Columns ──
@@ -65,14 +68,16 @@ class ES_Fulfillment_Admin {
             $new_columns[ $key ] = $label;
             // Insert after 'order_total' or 'order_status'.
             if ( 'order_total' === $key ) {
-                $new_columns['es_tracking'] = __( 'Shipment Tracking', 'erpnext-shipping' );
-                $new_columns['es_status']   = __( 'Shipment Status', 'erpnext-shipping' );
+                $new_columns['es_ship_method'] = __( 'Shipping Method', 'erpnext-shipping' );
+                $new_columns['es_tracking']    = __( 'Shipment Tracking', 'erpnext-shipping' );
+                $new_columns['es_status']      = __( 'Shipment Status', 'erpnext-shipping' );
             }
         }
         // Fallback if order_total wasn't found.
         if ( ! isset( $new_columns['es_tracking'] ) ) {
-            $new_columns['es_tracking'] = __( 'Shipment Tracking', 'erpnext-shipping' );
-            $new_columns['es_status']   = __( 'Shipment Status', 'erpnext-shipping' );
+            $new_columns['es_ship_method'] = __( 'Shipping Method', 'erpnext-shipping' );
+            $new_columns['es_tracking']    = __( 'Shipment Tracking', 'erpnext-shipping' );
+            $new_columns['es_status']      = __( 'Shipment Status', 'erpnext-shipping' );
         }
         return $new_columns;
     }
@@ -81,7 +86,9 @@ class ES_Fulfillment_Admin {
      * Render column content — HPOS (receives column name and order object).
      */
     public static function render_order_column( $column_name, $order ) {
-        if ( 'es_tracking' === $column_name ) {
+        if ( 'es_ship_method' === $column_name ) {
+            self::render_ship_method_column( $order );
+        } elseif ( 'es_tracking' === $column_name ) {
             self::render_tracking_column( $order );
         } elseif ( 'es_status' === $column_name ) {
             self::render_status_column( $order );
@@ -92,7 +99,7 @@ class ES_Fulfillment_Admin {
      * Render column content — Legacy (receives column name and post ID).
      */
     public static function render_order_column_legacy( $column_name, $post_id ) {
-        if ( 'es_tracking' !== $column_name && 'es_status' !== $column_name ) {
+        if ( ! in_array( $column_name, array( 'es_ship_method', 'es_tracking', 'es_status' ), true ) ) {
             return;
         }
         $order = wc_get_order( $post_id );
@@ -100,10 +107,29 @@ class ES_Fulfillment_Admin {
             echo '&ndash;';
             return;
         }
-        if ( 'es_tracking' === $column_name ) {
+        if ( 'es_ship_method' === $column_name ) {
+            self::render_ship_method_column( $order );
+        } elseif ( 'es_tracking' === $column_name ) {
             self::render_tracking_column( $order );
         } else {
             self::render_status_column( $order );
+        }
+    }
+
+    private static function render_ship_method_column( $order ) {
+        $methods = $order->get_shipping_methods();
+        if ( empty( $methods ) ) {
+            // Check if it's a pickup order (no shipping method).
+            $pickup_statuses = array( 'processing-lp', 'ready-pickup', 'pickup' );
+            if ( in_array( $order->get_status(), $pickup_statuses, true ) ) {
+                echo '<span style="color:#f0ad4e;">Local Pickup</span>';
+            } else {
+                echo '&ndash;';
+            }
+            return;
+        }
+        foreach ( $methods as $method ) {
+            echo esc_html( $method->get_method_title() ) . '<br>';
         }
     }
 
@@ -188,9 +214,9 @@ class ES_Fulfillment_Admin {
                 'name'   => __( 'Mark as Shipped', 'erpnext-shipping' ),
                 'action' => 'es_mark_shipped',
             );
-            // Add tracking link — goes to order edit with tracking meta box.
+            // Add tracking — opens inline modal on order list page.
             $actions['es_add_tracking'] = array(
-                'url'    => $edit_url . '#es-shipment-tracking',
+                'url'    => '#',
                 'name'   => __( 'Add tracking', 'erpnext-shipping' ),
                 'action' => 'es_add_tracking',
             );
@@ -432,6 +458,7 @@ class ES_Fulfillment_Admin {
         .es-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; margin-right: 3px; }
 
         /* Column widths */
+        .column-es_ship_method { width: 130px; }
         .column-es_tracking { width: 180px; }
         .column-es_status { width: 140px; }
 
@@ -448,7 +475,115 @@ class ES_Fulfillment_Admin {
         .wc-action-button-es_picked_up { color: #7ad03a !important; }
         .wc-action-button-es_add_tracking { color: #999 !important; }
         .wc-action-button-es_view_tracking { color: #5b9bd5 !important; }
+
+        /* Quick tracking modal */
+        .es-modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:100000; }
+        .es-modal-overlay.active { display:flex; align-items:center; justify-content:center; }
+        .es-modal { background:#fff; border-radius:6px; padding:24px; width:380px; max-width:90vw; box-shadow:0 4px 20px rgba(0,0,0,.3); }
+        .es-modal h3 { margin:0 0 16px; font-size:15px; }
+        .es-modal label { display:block; font-weight:600; font-size:12px; margin:10px 0 4px; }
+        .es-modal select, .es-modal input[type="text"] { width:100%; }
+        .es-modal-actions { margin-top:16px; display:flex; gap:8px; justify-content:flex-end; }
         </style>
+        <?php
+    }
+
+    // ── Quick Tracking Modal ──
+
+    public static function render_tracking_modal() {
+        $screen = get_current_screen();
+        if ( ! $screen || ! in_array( $screen->id, array( 'edit-shop_order', 'woocommerce_page_wc-orders' ), true ) ) {
+            return;
+        }
+        $providers = ES_Fulfillment_Tracking::get_providers();
+        ?>
+        <div class="es-modal-overlay" id="es-tracking-modal">
+            <div class="es-modal">
+                <h3><?php esc_html_e( 'Add Tracking', 'erpnext-shipping' ); ?> — <span id="es-modal-order-label"></span></h3>
+                <label><?php esc_html_e( 'Carrier', 'erpnext-shipping' ); ?></label>
+                <select id="es-modal-provider">
+                    <?php foreach ( $providers as $slug => $data ) : ?>
+                        <option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $data['name'] ); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <label><?php esc_html_e( 'Tracking Number', 'erpnext-shipping' ); ?></label>
+                <input type="text" id="es-modal-tracking" placeholder="e.g. TCG100042593T">
+                <input type="hidden" id="es-modal-order-id" value="">
+                <div class="es-modal-actions">
+                    <button type="button" class="button" id="es-modal-cancel"><?php esc_html_e( 'Cancel', 'erpnext-shipping' ); ?></button>
+                    <button type="button" class="button button-primary" id="es-modal-submit"><?php esc_html_e( 'Add & Ship', 'erpnext-shipping' ); ?></button>
+                </div>
+            </div>
+        </div>
+        <script>
+        jQuery(function($) {
+            var $modal = $('#es-tracking-modal');
+
+            // Open modal when "Add tracking" action clicked.
+            $(document).on('click', '.wc-action-button-es_add_tracking', function(e) {
+                e.preventDefault();
+                // Get order ID from the row.
+                var $row = $(this).closest('tr');
+                var orderId = $row.find('.order-view').text().replace('#', '').trim()
+                    || $row.find('a.order-view').attr('href').match(/id=(\d+)/)?.[1]
+                    || $row.data('id');
+
+                // HPOS uses data attribute or link.
+                if (!orderId) {
+                    var link = $row.find('td.order_number a, td.column-order_number a').attr('href') || '';
+                    var m = link.match(/[?&]id=(\d+)/) || link.match(/post=(\d+)/);
+                    orderId = m ? m[1] : '';
+                }
+
+                if (!orderId) {
+                    alert('Could not determine order ID.');
+                    return;
+                }
+
+                $('#es-modal-order-id').val(orderId);
+                $('#es-modal-order-label').text('#' + orderId);
+                $('#es-modal-tracking').val('');
+                $modal.addClass('active');
+                setTimeout(function() { $('#es-modal-tracking').focus(); }, 50);
+            });
+
+            // Close modal.
+            $('#es-modal-cancel').on('click', function() { $modal.removeClass('active'); });
+            $modal.on('click', function(e) { if (e.target === this) $modal.removeClass('active'); });
+
+            // Submit tracking.
+            $('#es-modal-submit').on('click', function() {
+                var $btn = $(this);
+                var number = $('#es-modal-tracking').val().trim();
+                if (!number) { $('#es-modal-tracking').focus(); return; }
+
+                $btn.prop('disabled', true).text('<?php echo esc_js( __( 'Adding...', 'erpnext-shipping' ) ); ?>');
+
+                $.post(ajaxurl, {
+                    action: 'es_add_tracking',
+                    _ajax_nonce: '<?php echo wp_create_nonce( 'es_quick_tracking' ); ?>',
+                    order_id: $('#es-modal-order-id').val(),
+                    tracking_provider: $('#es-modal-provider').val(),
+                    tracking_number: number,
+                    date_shipped: '<?php echo esc_js( date( 'Y-m-d' ) ); ?>',
+                    custom_tracking_link: '',
+                    no_status_update: 0
+                }, function(response) {
+                    if (response.success) {
+                        location.reload();
+                    } else {
+                        alert(response.data || 'Failed to add tracking.');
+                        $btn.prop('disabled', false).text('<?php echo esc_js( __( 'Add & Ship', 'erpnext-shipping' ) ); ?>');
+                    }
+                });
+            });
+
+            // Submit on Enter key.
+            $('#es-modal-tracking').on('keypress', function(e) {
+                if (e.which === 13) { e.preventDefault(); $('#es-modal-submit').click(); }
+            });
+        });
+        </script>
         <?php
     }
 
@@ -688,7 +823,12 @@ class ES_Fulfillment_Admin {
      */
     public static function ajax_add_tracking() {
         $order_id = intval( $_POST['order_id'] ?? 0 );
-        check_ajax_referer( 'es_tracking_' . $order_id );
+
+        // Accept either per-order nonce (meta box) or generic nonce (quick modal).
+        if ( ! wp_verify_nonce( $_POST['_ajax_nonce'] ?? '', 'es_tracking_' . $order_id )
+          && ! wp_verify_nonce( $_POST['_ajax_nonce'] ?? '', 'es_quick_tracking' ) ) {
+            wp_send_json_error( 'Invalid nonce.' );
+        }
 
         if ( ! current_user_can( 'manage_woocommerce' ) ) {
             wp_send_json_error( 'Permission denied.' );

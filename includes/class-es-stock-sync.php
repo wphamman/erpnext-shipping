@@ -47,7 +47,11 @@ class ES_Stock_Sync {
      */
     public static function get_location_ids() {
         $locations = get_option( 'es_shipping_locations', array() );
-        return array_filter( array_column( $locations, 'id' ) );
+        // Exclude collection points — they don't have stock or ship orders.
+        $warehouse_locations = array_filter( $locations, function( $loc ) {
+            return ( $loc['type'] ?? 'warehouse' ) === 'warehouse';
+        } );
+        return array_filter( array_column( $warehouse_locations, 'id' ) );
     }
 
     /**

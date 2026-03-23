@@ -86,9 +86,15 @@ class ES_Admin_Page {
                     }
                 }
 
+                $loc_type = sanitize_text_field( $loc['type'] ?? 'warehouse' );
+                if ( ! in_array( $loc_type, array( 'warehouse', 'collection_point' ), true ) ) {
+                    $loc_type = 'warehouse';
+                }
+
                 $locations[] = array(
                     'id'             => $id,
                     'name'           => $name,
+                    'type'           => $loc_type,
                     'street'         => sanitize_text_field( $loc['street'] ?? '' ),
                     'suburb'         => sanitize_text_field( $loc['suburb'] ?? '' ),
                     'city'           => sanitize_text_field( $loc['city'] ?? '' ),
@@ -470,24 +476,31 @@ class ES_Admin_Page {
                 }
                 locations.forEach(function(loc, idx) {
                     var whText = (loc.erp_warehouses || []).join('\n');
+                    var locType = loc.type || 'warehouse';
+                    var isCP = locType === 'collection_point';
                     var card = '<div class="es-location-card" data-index="' + idx + '">' +
                         '<h3>' +
                             '<input type="text" class="es-loc-name regular-text" value="' + escAttr(loc.name || '') + '" placeholder="Location name (e.g. Cape Town Warehouse)">' +
                             '<a href="#" class="es-remove-location">Remove</a>' +
                         '</h3>' +
                         '<div class="es-location-fields">' +
+                            '<div class="es-full-width"><label>Location Type</label>' +
+                            '<select class="es-loc-type">' +
+                                '<option value="warehouse"' + (locType === 'warehouse' ? ' selected' : '') + '>Warehouse — ships orders, needs ERPNext mapping</option>' +
+                                '<option value="collection_point"' + (isCP ? ' selected' : '') + '>Collection Point — pickup only, no warehouse mapping</option>' +
+                            '</select></div>' +
                             '<div><label>Street</label><input type="text" class="es-loc-street" value="' + escAttr(loc.street || '') + '"></div>' +
                             '<div><label>Suburb</label><input type="text" class="es-loc-suburb" value="' + escAttr(loc.suburb || '') + '"></div>' +
                             '<div><label>City</label><input type="text" class="es-loc-city" value="' + escAttr(loc.city || '') + '"></div>' +
                             '<div><label>Province</label><input type="text" class="es-loc-province" value="' + escAttr(loc.province || '') + '"></div>' +
                             '<div><label>Postal Code</label><input type="text" class="es-loc-postcode" value="' + escAttr(loc.postcode || '') + '"></div>' +
                             '<div><label>Country</label><input type="text" class="es-loc-country" value="' + escAttr(loc.country || 'ZA') + '"></div>' +
-                            '<div class="es-full-width"><label>ERPNext Warehouses (one per line)</label><textarea class="es-loc-warehouses" rows="3" placeholder="Main Warehouse - My Company&#10;Retail Shop - My Company">' + escAttr(whText) + '</textarea>' +
+                            '<div class="es-full-width es-warehouse-fields" style="' + (isCP ? 'display:none;' : '') + '"><label>ERPNext Warehouses (one per line)</label><textarea class="es-loc-warehouses" rows="3" placeholder="Main Warehouse - My Company&#10;Retail Shop - My Company">' + escAttr(whText) + '</textarea>' +
                             '<p class="description" style="margin-top:4px;">List all ERPNext warehouses that ship from this location. Stock from these warehouses will be combined when determining if this location can fulfill an order.</p></div>' +
-                            '<div><label>SLW Term ID (optional)</label><input type="number" class="es-loc-slw-term small-text" value="' + (loc.slw_term_id || '') + '" min="0" placeholder="Optional">' +
+                            '<div class="es-warehouse-fields" style="' + (isCP ? 'display:none;' : '') + '"><label>SLW Term ID (optional)</label><input type="number" class="es-loc-slw-term small-text" value="' + (loc.slw_term_id || '') + '" min="0" placeholder="Optional">' +
                             '<p class="description" style="margin-top:4px;">If using Stock Locations for WooCommerce, create the location there first, then copy its term ID here. Find it under Products &gt; Stock Locations.</p></div>' +
-                            '<div><label>' +
-                            '<input type="checkbox" name="" class="es-pickup-enabled" ' + (loc.pickup_enabled ? 'checked' : '') + '> ' +
+                            '<div style="padding-top:8px;"><label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal;">' +
+                            '<input type="checkbox" name="" class="es-pickup-enabled" ' + (loc.pickup_enabled || isCP ? 'checked' : '') + (isCP ? ' disabled' : '') + '> ' +
                             '<?php esc_html_e( "Available for pickup", "erpnext-shipping" ); ?>' +
                             '</label></div>' +
                         '</div>' +
@@ -502,21 +515,23 @@ class ES_Admin_Page {
                     var $card = $(this);
                     var idx = $card.data('index');
                     var name = $card.find('.es-loc-name').val().trim();
+                    var locType = $card.find('.es-loc-type').val() || 'warehouse';
                     var whText = $card.find('.es-loc-warehouses').val();
                     var warehouses = whText ? whText.split('\n').map(function(s){ return s.trim(); }).filter(Boolean) : [];
 
                     result.push({
                         id: (locations[idx] && locations[idx].id) || '',
                         name: name,
+                        type: locType,
                         street: $card.find('.es-loc-street').val().trim(),
                         suburb: $card.find('.es-loc-suburb').val().trim(),
                         city: $card.find('.es-loc-city').val().trim(),
                         province: $card.find('.es-loc-province').val().trim(),
                         postcode: $card.find('.es-loc-postcode').val().trim(),
                         country: $card.find('.es-loc-country').val().trim() || 'ZA',
-                        erp_warehouses: warehouses,
-                        slw_term_id: parseInt($card.find('.es-loc-slw-term').val()) || 0,
-                        pickup_enabled: $card.find('.es-pickup-enabled').is(':checked'),
+                        erp_warehouses: locType === 'collection_point' ? [] : warehouses,
+                        slw_term_id: locType === 'collection_point' ? 0 : (parseInt($card.find('.es-loc-slw-term').val()) || 0),
+                        pickup_enabled: locType === 'collection_point' ? true : $card.find('.es-pickup-enabled').is(':checked'),
                     });
                 });
                 return result;
@@ -528,11 +543,20 @@ class ES_Admin_Page {
 
             renderLocations();
 
+            // Toggle warehouse fields when type changes.
+            $container.on('change', '.es-loc-type', function() {
+                var $card = $(this).closest('.es-location-card');
+                var isCP = $(this).val() === 'collection_point';
+                $card.find('.es-warehouse-fields').toggle(!isCP);
+                $card.find('.es-pickup-enabled').prop('checked', isCP || $card.find('.es-pickup-enabled').is(':checked')).prop('disabled', isCP);
+            });
+
             // Add location button.
             $('#es-add-location').on('click', function() {
                 locations.push({
                     id: '',
                     name: '',
+                    type: 'warehouse',
                     street: '',
                     suburb: '',
                     city: '',
