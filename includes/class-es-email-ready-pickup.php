@@ -88,12 +88,20 @@ class ES_Email_Ready_Pickup extends WC_Email {
             $loc['postcode'] ?? '',
         ) );
 
+        $message = $loc['customer_message'] ?? '';
+
         if ( $plain ) {
             echo implode( ', ', array_map( 'esc_html', $parts ) ) . "\n";
+            if ( $message ) {
+                echo "\n" . esc_html( $message ) . "\n";
+            }
         } else {
             echo '<p style="background:#f8f8f8; padding:12px; border-left:4px solid #7ad03a; margin:16px 0;">';
             echo '<strong>' . esc_html( $loc['name'] ?? '' ) . '</strong><br>';
             echo esc_html( implode( ', ', array_slice( $parts, 1 ) ) );
+            if ( $message ) {
+                echo '<br><em style="color:#666;">' . esc_html( $message ) . '</em>';
+            }
             echo '</p>';
         }
     }

@@ -898,7 +898,10 @@ class ES_Fulfillment_Admin {
                 var $btn = $(this);
                 var newStatus = $btn.data('status');
                 $btn.prop('disabled', true).text('Updating...');
-                window.location.href = '<?php echo esc_js( wp_nonce_url( admin_url( 'admin-ajax.php?action=es_update_order_status&order_id=' . $order_id . '&new_status=' ), 'es_status_' . $order_id ) ); ?>' + newStatus;
+                // Build URL with status placeholder replaced, nonce appended after.
+                var baseUrl = '<?php echo esc_js( admin_url( 'admin-ajax.php?action=es_update_order_status&order_id=' . $order_id ) ); ?>';
+                var nonce = '<?php echo esc_js( wp_create_nonce( 'es_status_' . $order_id ) ); ?>';
+                window.location.href = baseUrl + '&new_status=' + newStatus + '&_wpnonce=' + nonce;
             });
         });
         </script>

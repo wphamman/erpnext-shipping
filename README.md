@@ -4,6 +4,7 @@ Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routin
 
 ## Features
 
+### Shipping Rates
 - **Multi-carrier rates** — queries The Courier Guy (Ship Logic) and MDS Collivery APIs in real time
 - **ERPNext stock routing** — automatically determines which warehouse(s) to ship from based on live inventory
 - **N-location support** — configure unlimited dispatch locations via the admin UI
@@ -13,6 +14,18 @@ Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routin
 - **Configurable pricing** — percentage or flat markup, free shipping threshold, flat rate fallback
 - **Rate caching** — 15-minute transient cache per location/destination/parcel combination
 - **WP Cron stock sync** — syncs ERPNext Bin data every 15 minutes (configurable)
+
+### Order Fulfillment
+- **Replaces AST Pro + TrackShip + Zorem Local Pickup Pro** — unified tracking, courier polling, and pickup management
+- **Migration-safe** — two-mode operation (Migration / Active) with identical status slugs to prevent mass email on plugin switchover
+- **Custom order statuses** — Partially Shipped, Delivered, Processing LP, Ready For Pickup, Picked Up
+- **Courier tracking cron** — polls TCG and MDS APIs every 15 minutes, auto-updates order status on delivery
+- **AST-compatible REST API** — tracking endpoints under both `wc/v3` and `wc-shipment-tracking/v3` namespaces for woocommerce_fusion
+- **Order list enhancements** — Shipping Method, Shipment Tracking, and Shipment Status columns; flow-aware action buttons; filter dropdowns
+- **Quick tracking modal** — add carrier + tracking number from the order list without navigating away; includes shipping note and waybill validation
+- **Checkout pickup selector** — location dropdown when customer selects Local Pickup, with address display and custom messages
+- **Collection points** — pickup-only locations without ERPNext warehouse mapping (e.g. partner breweries, taprooms)
+- **Fulfillment emails** — Processing LP, Ready For Pickup (with location address + customer message), Picked Up, Partially Shipped, Delivered
 
 ## Requirements
 
@@ -40,12 +53,15 @@ Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routin
 Navigate to **WooCommerce > ERPNext Shipping** in the WordPress admin.
 
 Click **Add Location** and fill in:
+- **Location Type** — Warehouse (ships orders, needs ERPNext mapping) or Collection Point (pickup only)
 - **Location Name** — a descriptive name (e.g. "Cape Town Warehouse")
 - **Address fields** — street, suburb, city, province, postcode, country
-- **ERPNext Warehouses** — one warehouse name per line, exactly as they appear in ERPNext (e.g. `Main Warehouse - My Company`)
+- **ERPNext Warehouses** — (Warehouse type only) one warehouse name per line, exactly as they appear in ERPNext (e.g. `Main Warehouse - My Company`)
 - **SLW Term ID** — (optional) the Stock Locations for WooCommerce taxonomy term ID for this location
+- **Available for pickup** — whether customers can collect orders from this location (always on for Collection Points)
+- **Customer Message** — (optional) shown at checkout when selected and in the Ready for Pickup email (e.g. "Allow 5 business days for delivery to this location")
 
-You can add as many locations as needed. Each location can map to multiple ERPNext warehouses.
+You can add as many locations as needed. Each warehouse location can map to multiple ERPNext warehouses. Collection points are for pickup-only partner locations (e.g. breweries, taprooms) that don't need ERPNext warehouse mapping.
 
 ### 2. ERPNext Stock Sync
 
@@ -72,6 +88,21 @@ Stock is synced automatically every 15 minutes via WP Cron. The sync pulls all B
 - **Flat Rate Fallback** — shown when all carrier APIs fail (0 to disable)
 
 All prices are rounded up to the nearest R5.
+
+### 5. Fulfillment Module
+
+Scroll to the **Fulfillment Module** section at the bottom of the settings page.
+
+**Migration mode** (default): Only registers custom order statuses. Safe to run alongside AST Pro, TrackShip, and Local Pickup Pro.
+
+**Active mode**: Enables full fulfillment — tracking, courier polling, emails, admin UI, and checkout pickup selector. Switch to Active **after** deactivating the old plugins.
+
+**Switchover steps:**
+1. Install and activate ERPNext Shipping (stays in Migration mode)
+2. Verify custom statuses appear in the orders list
+3. Deactivate AST Pro, TrackShip, and Local Pickup Pro
+4. Switch to Active mode
+5. Statuses survive because the plugin owns the same slugs — no mass email
 
 ## How It Works
 
@@ -113,19 +144,30 @@ Each rate returned should be an array with: `carrier`, `service_name`, `service_
 
 ```
 erpnext-shipping/
-├── erpnext-shipping.php              # Plugin bootstrap, cron, AJAX
+├── erpnext-shipping.php                    # Plugin bootstrap, cron, fulfillment init
 ├── includes/
-│   ├── class-es-shipping-method.php  # WC_Shipping_Method (main logic)
-│   ├── class-es-admin-page.php       # Admin settings page + location UI
-│   ├── class-es-stock-sync.php       # ERPNext Bin sync + fulfillment planning
-│   ├── class-es-parcel-estimator.php # Cart → parcel dimensions/weight
-│   ├── class-es-rate-cache.php       # Transient-based rate caching
-│   ├── class-es-carrier-base.php     # Abstract carrier interface
-│   ├── class-es-carrier-shiplogic.php # The Courier Guy (Ship Logic API)
-│   └── class-es-carrier-collivery.php # MDS Collivery (API v3)
+│   ├── class-es-shipping-method.php        # WC_Shipping_Method (rate calculation)
+│   ├── class-es-admin-page.php             # Admin settings page + location UI
+│   ├── class-es-stock-sync.php             # ERPNext Bin sync + fulfillment planning
+│   ├── class-es-parcel-estimator.php       # Cart → parcel dimensions/weight
+│   ├── class-es-rate-cache.php             # Transient-based rate caching
+│   ├── class-es-carrier-base.php           # Abstract carrier interface
+│   ├── class-es-carrier-shiplogic.php      # The Courier Guy (Ship Logic API)
+│   ├── class-es-carrier-collivery.php      # MDS Collivery (API v3)
+│   ├── class-es-fulfillment-statuses.php   # Custom order statuses + pickup resolver
+│   ├── class-es-fulfillment-tracking.php   # Tracking meta + AST-compatible REST API
+│   ├── class-es-fulfillment-admin.php      # Order list columns, actions, meta box, modal
+│   ├── class-es-fulfillment-cron.php       # Courier polling cron (TCG + MDS)
+│   ├── class-es-fulfillment-checkout.php   # Checkout pickup location selector
+│   ├── class-es-email-partially-shipped.php
+│   ├── class-es-email-order-delivered.php
+│   ├── class-es-email-processing-lp.php
+│   ├── class-es-email-ready-pickup.php
+│   └── class-es-email-picked-up.php
 ├── README.md
 ├── LICENSE
-└── CHANGELOG.md
+├── CHANGELOG.md
+└── CLAUDE.md
 ```
 
 ## License

@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-03-23
+
+### Added
+- **Fulfillment module**: replaces AST Pro, TrackShip, and Zorem Local Pickup Pro with built-in tracking, courier polling, and pickup management.
+- **Custom order statuses**: Partially Shipped, Delivered, Processing LP, Ready For Pickup, Picked Up. Registered with identical slugs for safe migration from old plugins.
+- **Two-mode operation**: Migration mode (statuses only, safe alongside old plugins) and Active mode (full fulfillment).
+- **AST-compatible REST API**: tracking endpoints under both `wc/v3` and `wc-shipment-tracking/v3` namespaces for woocommerce_fusion compatibility. Includes GET/POST/DELETE for tracking items and GET for providers list.
+- **Courier tracking cron**: polls TCG (ShipLogic API v2) and MDS (Collivery API v3) every 15 minutes. Forward-only status updates, min-status across parcels for multi-parcel orders.
+- **Order list columns**: Shipping Method, Shipment Tracking (carrier + waybill + date), Shipment Status (live courier status with colored dots).
+- **Flow-aware action buttons**: Processing → Mark as Shipped + Add Tracking; Processing LP → Ready for Pickup; Ready for Pickup → Picked Up. WC core "Complete" action removed.
+- **Quick tracking modal**: inline popup on order list with carrier dropdown + tracking number. Includes shipping note field and waybill validation with carrier mismatch warning.
+- **Filter dropdowns**: filter orders by shipping provider and by shipment status.
+- **Meta box flow separation**: delivery orders show tracking UI; pickup orders show pickup location + status action buttons.
+- **Checkout pickup location selector**: dropdown appears when customer selects Local Pickup, shows address and customer message, validates selection, saves to order meta, auto-sets Processing LP status.
+- **Collection point location type**: pickup-only locations without ERPNext warehouse mapping. Excluded from rate calculations and stock sync.
+- **Customer message field**: per-location message shown at checkout and in Ready for Pickup email.
+- **Fulfillment email classes**: Processing LP, Ready For Pickup, Picked Up, Partially Shipped, Delivered.
+- **Pickup location resolver**: checks plugin meta first, falls back to Zorem Local Pickup Pro meta for in-flight orders, migrates on first access.
+
+### Fixed
+- Pickup status changes blocked server-side when no pickup location is set (prevents silent email failure).
+- Empty tracking meta cleaned up on last entry deletion (fixes NOT EXISTS filters and cron polling).
+
 ## [1.1.0] - 2026-02-26
 
 ### Added
