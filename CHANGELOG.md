@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.3] - 2026-03-23
+
+### Fixed
+- PHP syntax error in meta box — missing `?>` close tag before template block caused fatal on activation.
+- Ampersand in modal button text ("Add & Ship") rendered as `&amp;` — changed to "Add + Ship".
+
+## [1.5.2] - 2026-03-23
+
+### Fixed
+- PHP fatal error on plugin activation — meta box template had `<?php` inside PHP code block.
+
 ## [1.5.1] - 2026-03-23
 
 ### Fixed
