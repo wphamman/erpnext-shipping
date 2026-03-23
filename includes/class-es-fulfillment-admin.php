@@ -515,7 +515,7 @@ class ES_Fulfillment_Admin {
                 <input type="hidden" id="es-modal-confirmed" value="0">
                 <div class="es-modal-actions">
                     <button type="button" class="button" id="es-modal-cancel"><?php esc_html_e( 'Cancel', 'erpnext-shipping' ); ?></button>
-                    <button type="button" class="button button-primary" id="es-modal-submit"><?php esc_html_e( 'Add & Ship', 'erpnext-shipping' ); ?></button>
+                    <button type="button" class="button button-primary" id="es-modal-submit"><?php esc_html_e( 'Add + Ship', 'erpnext-shipping' ); ?></button>
                 </div>
             </div>
         </div>
@@ -555,7 +555,7 @@ class ES_Fulfillment_Admin {
                 $('#es-modal-note').val('');
                 $('#es-modal-confirmed').val('0');
                 $('#es-modal-waybill-warning').hide();
-                $('#es-modal-submit').text('<?php echo esc_js( __( 'Add & Ship', 'erpnext-shipping' ) ); ?>');
+                $('#es-modal-submit').text('<?php echo esc_js( __( 'Add + Ship', 'erpnext-shipping' ) ); ?>');
                 $modal.addClass('active');
                 setTimeout(function() { $('#es-modal-tracking').focus(); }, 50);
             });
@@ -585,11 +585,11 @@ class ES_Fulfillment_Admin {
 
                 if (msg) {
                     $warn.text(msg).show();
-                    $btn.text('<?php echo esc_js( __( 'Confirm & Ship', 'erpnext-shipping' ) ); ?>');
+                    $btn.text('<?php echo esc_js( __( 'Confirm + Ship', 'erpnext-shipping' ) ); ?>');
                     $('#es-modal-confirmed').val('0');
                 } else {
                     $warn.hide();
-                    $btn.text('<?php echo esc_js( __( 'Add & Ship', 'erpnext-shipping' ) ); ?>');
+                    $btn.text('<?php echo esc_js( __( 'Add + Ship', 'erpnext-shipping' ) ); ?>');
                     $('#es-modal-confirmed').val('1');
                 }
             }
@@ -607,7 +607,7 @@ class ES_Fulfillment_Admin {
                 var $warn = $('#es-modal-waybill-warning');
                 if ($warn.is(':visible') && $('#es-modal-confirmed').val() === '0') {
                     $('#es-modal-confirmed').val('1');
-                    $btn.text('<?php echo esc_js( __( 'Yes, Confirm & Ship', 'erpnext-shipping' ) ); ?>');
+                    $btn.text('<?php echo esc_js( __( 'Yes, Confirm + Ship', 'erpnext-shipping' ) ); ?>');
                     return;
                 }
 
@@ -634,7 +634,7 @@ class ES_Fulfillment_Admin {
                         location.reload();
                     } else {
                         alert(response.data || 'Failed to add tracking.');
-                        $btn.prop('disabled', false).text('<?php echo esc_js( __( 'Add & Ship', 'erpnext-shipping' ) ); ?>');
+                        $btn.prop('disabled', false).text('<?php echo esc_js( __( 'Add + Ship', 'erpnext-shipping' ) ); ?>');
                     }
                 });
             });
