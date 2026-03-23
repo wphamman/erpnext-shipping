@@ -683,6 +683,7 @@ class ES_Fulfillment_Admin {
         $is_pickup_order  = in_array( $status, $pickup_statuses, true );
 
         wp_nonce_field( 'es_tracking_' . $order_id, 'es_tracking_nonce' );
+        ?>
 
         <?php if ( $is_pickup_order ) : ?>
             <?php // ── PICKUP FLOW ── ?>
