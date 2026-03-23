@@ -528,9 +528,12 @@ class ES_Fulfillment_Admin {
                 var orderId = $row.data('id') || '';
 
                 if (!orderId) {
-                    var link = $row.find('td.order_number a, td.column-order_number a, a.order-view').attr('href') || '';
-                    var m = link.match(/[?&]id=(\d+)/) || link.match(/post=(\d+)/);
-                    orderId = m ? m[1] : '';
+                    var $link = $row.find('td.order_number a, td.column-order_number a, a.order-view').first();
+                    var href = $link.length ? ($link.attr('href') || '') : '';
+                    if (href) {
+                        var m = href.match(/[?&]id=(\d+)/) || href.match(/post=(\d+)/);
+                        orderId = m ? m[1] : '';
+                    }
                 }
 
                 if (!orderId) {

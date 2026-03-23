@@ -530,7 +530,9 @@ class ES_Admin_Page {
                         postcode: $card.find('.es-loc-postcode').val().trim(),
                         country: $card.find('.es-loc-country').val().trim() || 'ZA',
                         erp_warehouses: locType === 'collection_point' ? [] : warehouses,
-                        slw_term_id: locType === 'collection_point' ? 0 : (parseInt($card.find('.es-loc-slw-term').val()) || 0),
+                        // Preserve slw_term_id even for collection points — the Zorem
+                        // migration fallback maps old pickup orders via this field.
+                        slw_term_id: parseInt($card.find('.es-loc-slw-term').val()) || (locations[idx] && locations[idx].slw_term_id) || 0,
                         pickup_enabled: locType === 'collection_point' ? true : $card.find('.es-pickup-enabled').is(':checked'),
                     });
                 });
