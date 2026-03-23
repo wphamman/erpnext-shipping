@@ -370,12 +370,12 @@ class ES_Fulfillment_Tracking {
             return;
         }
 
-        // Only show on relevant email types.
+        // Only show on WC core emails that don't have their own tracking template.
+        // Our plugin emails (es_partially_shipped, es_order_delivered) render
+        // tracking inline via their template files — skip them here to avoid duplication.
         $show_on = array(
-            'customer_completed_order',  // Shipped
-            'es_partially_shipped',
-            'es_order_delivered',
-            'customer_invoice',          // Include on invoice emails too
+            'customer_completed_order',  // Shipped (WC core)
+            'customer_invoice',          // Invoice (WC core)
         );
 
         $email_id = $email->id ?? '';
