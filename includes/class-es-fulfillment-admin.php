@@ -120,7 +120,7 @@ class ES_Fulfillment_Admin {
         $methods = $order->get_shipping_methods();
         if ( empty( $methods ) ) {
             // Check if it's a pickup order (no shipping method).
-            $pickup_statuses = array( 'processing-lp', 'ready-pickup', 'pickup' );
+            $pickup_statuses = array( 'processing-lp', 'dispatched-pickup', 'ready-pickup', 'pickup' );
             if ( in_array( $order->get_status(), $pickup_statuses, true ) ) {
                 echo '<span style="color:#f0ad4e;">Local Pickup</span>';
             } else {
@@ -224,6 +224,17 @@ class ES_Fulfillment_Admin {
 
         // Pickup flow.
         if ( 'processing-lp' === $status ) {
+            $actions['es_dispatch_pickup'] = array(
+                'url'    => wp_nonce_url(
+                    admin_url( 'admin-ajax.php?action=es_update_order_status&order_id=' . $order->get_id() . '&new_status=dispatched-pickup' ),
+                    'es_status_' . $order->get_id()
+                ),
+                'name'   => __( 'Dispatch to Pickup', 'erpnext-shipping' ),
+                'action' => 'es_dispatch_pickup',
+            );
+        }
+
+        if ( 'dispatched-pickup' === $status ) {
             $actions['es_ready_pickup'] = array(
                 'url'    => wp_nonce_url(
                     admin_url( 'admin-ajax.php?action=es_update_order_status&order_id=' . $order->get_id() . '&new_status=ready-pickup' ),
@@ -275,14 +286,14 @@ class ES_Fulfillment_Admin {
             wp_die( 'Order not found.' );
         }
 
-        $allowed = array( 'completed', 'ready-pickup', 'pickup', 'delivered', 'partially-shipped' );
+        $allowed = array( 'completed', 'dispatched-pickup', 'ready-pickup', 'pickup', 'delivered', 'partially-shipped' );
         if ( ! in_array( $new_status, $allowed, true ) ) {
             wp_die( 'Invalid status.' );
         }
 
         // Block pickup status changes if no pickup location is set — the email
         // class silently bails without a location, leaving the customer uninformed.
-        if ( in_array( $new_status, array( 'ready-pickup', 'pickup' ), true ) ) {
+        if ( in_array( $new_status, array( 'dispatched-pickup', 'ready-pickup', 'pickup' ), true ) ) {
             $pickup_loc = ES_Fulfillment_Statuses::resolve_pickup_location( $order );
             if ( empty( $pickup_loc ) ) {
                 // Redirect to order edit so admin can set the pickup location first.
@@ -292,11 +303,12 @@ class ES_Fulfillment_Admin {
         }
 
         $labels = array(
-            'completed'         => 'Shipped',
-            'ready-pickup'      => 'Ready for Pickup',
-            'pickup'            => 'Picked Up',
-            'delivered'         => 'Delivered',
-            'partially-shipped' => 'Partially Shipped',
+            'completed'          => 'Shipped',
+            'dispatched-pickup'  => 'Dispatched to Pickup',
+            'ready-pickup'       => 'Ready for Pickup',
+            'pickup'             => 'Picked Up',
+            'delivered'          => 'Delivered',
+            'partially-shipped'  => 'Partially Shipped',
         );
 
         $order->update_status(
@@ -466,11 +478,13 @@ class ES_Fulfillment_Admin {
         .wc-action-button-es_mark_shipped::after { font-family: Dashicons; content: "\f310" !important; }    /* truck */
         .wc-action-button-es_add_tracking::after { font-family: Dashicons; content: "\f179" !important; }    /* plus-alt */
         .wc-action-button-es_view_tracking::after { font-family: Dashicons; content: "\f177" !important; }   /* visibility */
+        .wc-action-button-es_dispatch_pickup::after { font-family: Dashicons; content: "\f310" !important; } /* truck */
         .wc-action-button-es_ready_pickup::after { font-family: Dashicons; content: "\f513" !important; }    /* archive */
         .wc-action-button-es_picked_up::after { font-family: Dashicons; content: "\f147" !important; }       /* yes */
 
         /* Action button colors */
         .wc-action-button-es_mark_shipped { color: #5b9bd5 !important; }
+        .wc-action-button-es_dispatch_pickup { color: #5b9bd5 !important; }
         .wc-action-button-es_ready_pickup { color: #ffba00 !important; }
         .wc-action-button-es_picked_up { color: #7ad03a !important; }
         .wc-action-button-es_add_tracking { color: #999 !important; }
@@ -679,7 +693,7 @@ class ES_Fulfillment_Admin {
         $order_id  = $order->get_id();
         $status    = $order->get_status();
 
-        $pickup_statuses  = array( 'processing-lp', 'ready-pickup', 'pickup' );
+        $pickup_statuses  = array( 'processing-lp', 'dispatched-pickup', 'ready-pickup', 'pickup' );
         $is_pickup_order  = in_array( $status, $pickup_statuses, true );
 
         wp_nonce_field( 'es_tracking_' . $order_id, 'es_tracking_nonce' );
@@ -718,6 +732,10 @@ class ES_Fulfillment_Admin {
 
             <?php // Status action buttons for pickup flow. ?>
             <?php if ( 'processing-lp' === $status ) : ?>
+                <button type="button" class="button button-primary" id="es-pickup-status-btn" data-status="dispatched-pickup" style="width:100%;">
+                    <?php esc_html_e( 'Dispatch to Pickup Location', 'erpnext-shipping' ); ?>
+                </button>
+            <?php elseif ( 'dispatched-pickup' === $status ) : ?>
                 <button type="button" class="button button-primary" id="es-pickup-status-btn" data-status="ready-pickup" style="width:100%;">
                     <?php esc_html_e( 'Mark as Ready for Pickup', 'erpnext-shipping' ); ?>
                 </button>
@@ -1073,7 +1091,7 @@ class ES_Fulfillment_Admin {
             return;
         }
 
-        $pickup_statuses = array( 'processing-lp', 'ready-pickup', 'pickup' );
+        $pickup_statuses = array( 'processing-lp', 'dispatched-pickup', 'ready-pickup', 'pickup' );
         if ( ! in_array( $order->get_status(), $pickup_statuses, true ) ) {
             return;
         }

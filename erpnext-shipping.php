@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.7.1
+ * Version: 1.8.0
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Text Domain: erpnext-shipping
@@ -12,7 +12,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.7.1' );
+define( 'ES_SHIPPING_VERSION', '1.8.0' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // Add custom 15-minute cron interval (registered early so activation hook can use it).
@@ -91,12 +91,14 @@ add_filter( 'woocommerce_email_classes', function ( $emails ) {
     require_once ES_SHIPPING_PATH . 'includes/class-es-email-partially-shipped.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-email-order-delivered.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-email-processing-lp.php';
+    require_once ES_SHIPPING_PATH . 'includes/class-es-email-dispatched-pickup.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-email-ready-pickup.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-email-picked-up.php';
 
-    $emails['ES_Email_Partially_Shipped'] = new ES_Email_Partially_Shipped();
-    $emails['ES_Email_Order_Delivered']   = new ES_Email_Order_Delivered();
+    $emails['ES_Email_Partially_Shipped']  = new ES_Email_Partially_Shipped();
+    $emails['ES_Email_Order_Delivered']    = new ES_Email_Order_Delivered();
     $emails['ES_Email_Processing_LP']     = new ES_Email_Processing_LP();
+    $emails['ES_Email_Dispatched_Pickup'] = new ES_Email_Dispatched_Pickup();
     $emails['ES_Email_Ready_Pickup']      = new ES_Email_Ready_Pickup();
     $emails['ES_Email_Picked_Up']         = new ES_Email_Picked_Up();
 

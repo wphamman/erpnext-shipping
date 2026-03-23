@@ -24,6 +24,10 @@ class ES_Fulfillment_Statuses {
             'label' => 'Processing LP',
             'color' => '#f0ad4e',
         ),
+        'dispatched-pickup' => array(
+            'label' => 'Dispatched to Pickup',
+            'color' => '#5b9bd5',
+        ),
         'ready-pickup' => array(
             'label' => 'Ready For Pickup',
             'color' => '#ffba00',
@@ -103,9 +107,10 @@ class ES_Fulfillment_Statuses {
                 $new_statuses['wc-delivered']         = _x( 'Delivered', 'Order status', 'erpnext-shipping' );
             }
             if ( 'wc-processing' === $key ) {
-                $new_statuses['wc-processing-lp'] = _x( 'Processing LP', 'Order status', 'erpnext-shipping' );
-                $new_statuses['wc-ready-pickup']  = _x( 'Ready For Pickup', 'Order status', 'erpnext-shipping' );
-                $new_statuses['wc-pickup']        = _x( 'Picked Up', 'Order status', 'erpnext-shipping' );
+                $new_statuses['wc-processing-lp']     = _x( 'Processing LP', 'Order status', 'erpnext-shipping' );
+                $new_statuses['wc-dispatched-pickup']  = _x( 'Dispatched to Pickup', 'Order status', 'erpnext-shipping' );
+                $new_statuses['wc-ready-pickup']       = _x( 'Ready For Pickup', 'Order status', 'erpnext-shipping' );
+                $new_statuses['wc-pickup']             = _x( 'Picked Up', 'Order status', 'erpnext-shipping' );
             }
         }
         return $new_statuses;
