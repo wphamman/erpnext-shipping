@@ -37,6 +37,13 @@ class ES_Fulfillment_Tracking {
 
         // Inject tracking info into WooCommerce order emails.
         add_action( 'woocommerce_email_order_details', array( __CLASS__, 'email_tracking_info' ), 50, 4 );
+
+        // Customer-facing: tracking on My Account order detail page.
+        add_action( 'woocommerce_order_details_after_order_table', array( __CLASS__, 'myaccount_order_tracking' ) );
+
+        // Customer-facing: tracking column on My Account orders list.
+        add_filter( 'woocommerce_my_account_my_orders_columns', array( __CLASS__, 'myaccount_orders_column' ) );
+        add_action( 'woocommerce_my_account_my_orders_column_es-tracking', array( __CLASS__, 'myaccount_orders_column_content' ) );
     }
 
     /**
@@ -330,6 +337,30 @@ class ES_Fulfillment_Tracking {
     }
 
     /**
+     * Format raw courier status string for customer display.
+     */
+    public static function format_courier_status( $raw_status ) {
+        $labels = array(
+            'tcg:created'          => __( 'Processing', 'erpnext-shipping' ),
+            'tcg:collected'        => __( 'Collected', 'erpnext-shipping' ),
+            'tcg:in-transit'       => __( 'In Transit', 'erpnext-shipping' ),
+            'tcg:out-for-delivery' => __( 'Out For Delivery', 'erpnext-shipping' ),
+            'tcg:delivered'        => __( 'Delivered', 'erpnext-shipping' ),
+            'mds:7'               => __( 'Collected', 'erpnext-shipping' ),
+            'mds:9'               => __( 'In Transit', 'erpnext-shipping' ),
+            'mds:8'               => __( 'Delivered', 'erpnext-shipping' ),
+            'mds:32'              => __( 'Delivered', 'erpnext-shipping' ),
+        );
+
+        $parts = array_map( 'trim', explode( ',', $raw_status ) );
+        $readable = array();
+        foreach ( $parts as $part ) {
+            $readable[] = $labels[ $part ] ?? $part;
+        }
+        return implode( ', ', array_unique( $readable ) );
+    }
+
+    /**
      * Inject tracking info into WooCommerce order emails.
      * Fires after order details table on shipped/delivered/completed emails.
      */
@@ -408,6 +439,111 @@ class ES_Fulfillment_Tracking {
                 echo esc_html__( 'Track: ', 'erpnext-shipping' ) . esc_url( $url ) . "\n";
             }
             echo esc_html__( 'Shipped: ', 'erpnext-shipping' ) . esc_html( $date ) . "\n\n";
+        }
+    }
+
+    // ── My Account: Order Detail Page ──
+
+    /**
+     * Show tracking info on the customer's order detail page (My Account > View Order).
+     */
+    public static function myaccount_order_tracking( $order ) {
+        $items = self::get_tracking_items( $order );
+        if ( empty( $items ) ) {
+            return;
+        }
+        ?>
+        <h2><?php esc_html_e( 'Shipment Tracking', 'erpnext-shipping' ); ?></h2>
+        <table class="woocommerce-table shop_table es-tracking-table">
+            <thead>
+                <tr>
+                    <th><?php esc_html_e( 'Carrier', 'erpnext-shipping' ); ?></th>
+                    <th><?php esc_html_e( 'Tracking Number', 'erpnext-shipping' ); ?></th>
+                    <th><?php esc_html_e( 'Shipped', 'erpnext-shipping' ); ?></th>
+                    <th><?php esc_html_e( 'Status', 'erpnext-shipping' ); ?></th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ( $items as $item ) :
+                    $provider_name = self::get_provider_name( $item['tracking_provider'] );
+                    $url           = self::get_tracking_url( $item );
+                    $date          = date_i18n( get_option( 'date_format' ), $item['date_shipped'] );
+                ?>
+                <tr>
+                    <td><?php echo esc_html( $provider_name ); ?></td>
+                    <td>
+                        <?php if ( $url ) : ?>
+                            <a href="<?php echo esc_url( $url ); ?>" target="_blank"><?php echo esc_html( $item['tracking_number'] ); ?></a>
+                        <?php else : ?>
+                            <?php echo esc_html( $item['tracking_number'] ); ?>
+                        <?php endif; ?>
+                    </td>
+                    <td><?php echo esc_html( $date ); ?></td>
+                    <td>
+                        <?php
+                        $courier_status = $order->get_meta( '_es_courier_status', true );
+                        if ( $courier_status ) {
+                            echo esc_html( self::format_courier_status( $courier_status ) );
+                        } else {
+                            $order_status = $order->get_status();
+                            if ( 'delivered' === $order_status ) {
+                                esc_html_e( 'Delivered', 'erpnext-shipping' );
+                            } else {
+                                esc_html_e( 'Shipped', 'erpnext-shipping' );
+                            }
+                        }
+                        ?>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php
+    }
+
+    // ── My Account: Orders List Column ──
+
+    /**
+     * Add a Tracking column to the My Account orders list.
+     */
+    public static function myaccount_orders_column( $columns ) {
+        // Insert before 'order-actions'.
+        $new_columns = array();
+        foreach ( $columns as $key => $label ) {
+            if ( 'order-actions' === $key ) {
+                $new_columns['es-tracking'] = __( 'Tracking', 'erpnext-shipping' );
+            }
+            $new_columns[ $key ] = $label;
+        }
+        // Fallback if order-actions wasn't found.
+        if ( ! isset( $new_columns['es-tracking'] ) ) {
+            $new_columns['es-tracking'] = __( 'Tracking', 'erpnext-shipping' );
+        }
+        return $new_columns;
+    }
+
+    /**
+     * Render the Tracking column content on the My Account orders list.
+     */
+    public static function myaccount_orders_column_content( $order ) {
+        $items = self::get_tracking_items( $order );
+        if ( empty( $items ) ) {
+            echo '&ndash;';
+            return;
+        }
+
+        foreach ( $items as $item ) {
+            $provider_name = self::get_provider_name( $item['tracking_provider'] );
+            $url           = self::get_tracking_url( $item );
+
+            echo '<span style="font-size:12px;">';
+            echo esc_html( $provider_name ) . ': ';
+            if ( $url ) {
+                echo '<a href="' . esc_url( $url ) . '" target="_blank">' . esc_html( $item['tracking_number'] ) . '</a>';
+            } else {
+                echo esc_html( $item['tracking_number'] );
+            }
+            echo '</span><br>';
         }
     }
 }
