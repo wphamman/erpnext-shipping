@@ -106,13 +106,11 @@ class ES_Fulfillment_Checkout {
                         || (typeof woocommerce_params !== 'undefined' && woocommerce_params.ajax_url)
                         || (typeof wc_cart_params !== 'undefined' && wc_cart_params.ajax_url)
                         || '/wp-admin/admin-ajax.php';
-                    if ($(this).val()) {
-                        $.post(ajaxUrl, {
-                            action: 'es_save_checkout_pickup',
-                            location_id: $(this).val(),
-                            _wpnonce: '<?php echo wp_create_nonce( 'es_checkout_pickup' ); ?>'
-                        });
-                    }
+                    $.post(ajaxUrl, {
+                        action: 'es_save_checkout_pickup',
+                        location_id: $(this).val() || '',
+                        _wpnonce: '<?php echo wp_create_nonce( 'es_checkout_pickup' ); ?>'
+                    });
                 });
 
                 // Trigger initial state.
