@@ -522,17 +522,19 @@ class ES_Fulfillment_Admin {
             // Open modal when "Add tracking" action clicked.
             $(document).on('click', '.wc-action-button-es_add_tracking', function(e) {
                 e.preventDefault();
-                // Get order ID from the row.
+                // Get order ID from the row — prefer data attributes over text content
+                // (text may show a custom order number that differs from the WC order ID).
                 var $row = $(this).closest('tr');
-                var orderId = $row.find('.order-view').text().replace('#', '').trim()
-                    || $row.find('a.order-view').attr('href').match(/id=(\d+)/)?.[1]
-                    || $row.data('id');
+                var orderId = $row.data('id') || '';
 
-                // HPOS uses data attribute or link.
                 if (!orderId) {
-                    var link = $row.find('td.order_number a, td.column-order_number a').attr('href') || '';
+                    var link = $row.find('td.order_number a, td.column-order_number a, a.order-view').attr('href') || '';
                     var m = link.match(/[?&]id=(\d+)/) || link.match(/post=(\d+)/);
                     orderId = m ? m[1] : '';
+                }
+
+                if (!orderId) {
+                    orderId = $row.find('.order-view').text().replace('#', '').trim();
                 }
 
                 if (!orderId) {

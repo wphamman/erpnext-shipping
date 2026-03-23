@@ -103,7 +103,7 @@ class ES_Admin_Page {
                     'country'        => sanitize_text_field( $loc['country'] ?? 'ZA' ),
                     'erp_warehouses' => $erp_warehouses,
                     'slw_term_id'    => intval( $loc['slw_term_id'] ?? 0 ),
-                    'pickup_enabled' => ! empty( $loc['pickup_enabled'] ),
+                    'pickup_enabled' => 'collection_point' === $loc_type ? true : ! empty( $loc['pickup_enabled'] ),
                 );
             }
         }

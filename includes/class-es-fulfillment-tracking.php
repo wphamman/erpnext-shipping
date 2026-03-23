@@ -200,9 +200,10 @@ class ES_Fulfillment_Tracking {
             return new WP_Error( 'missing_field', 'tracking_number is required', array( 'status' => 400 ) );
         }
 
-        $provider     = sanitize_text_field( $params['tracking_provider'] ?? '' );
-        $date_shipped = intval( $params['date_shipped'] ?? time() );
-        $custom_link  = esc_url_raw( $params['custom_tracking_link'] ?? '' );
+        $provider    = sanitize_text_field( $params['tracking_provider'] ?? '' );
+        $raw_date    = $params['date_shipped'] ?? '';
+        $date_shipped = is_numeric( $raw_date ) ? intval( $raw_date ) : ( strtotime( $raw_date ) ?: time() );
+        $custom_link = esc_url_raw( $params['custom_tracking_link'] ?? '' );
 
         $item = self::create_tracking_item( $provider, $tracking_number, $date_shipped, $custom_link );
         self::save_tracking_item( $order, $item );
