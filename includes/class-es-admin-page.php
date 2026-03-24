@@ -152,6 +152,28 @@ class ES_Admin_Page {
             $opts['no_free_shipping_classes'] = sanitize_text_field( wp_unslash( $_POST['no_free_shipping_classes'] ) );
         }
 
+        // Watchdog settings.
+        $wd = get_option( 'es_watchdog_settings', array() );
+        $wd_checkboxes = array(
+            'alert_processing', 'alert_processing_lp', 'alert_on_hold',
+            'alert_dispatched_pickup', 'alert_shipped', 'alert_api_failures',
+            'alert_pickup_reminder',
+        );
+        foreach ( $wd_checkboxes as $key ) {
+            $wd[ $key ] = isset( $_POST[ 'wd_' . $key ] ) ? 'yes' : 'no';
+        }
+        $wd_numbers = array(
+            'processing_days', 'processing_lp_days', 'on_hold_days',
+            'dispatched_pickup_days', 'shipped_days', 'api_fail_threshold',
+            'pickup_reminder_1_days', 'pickup_reminder_2_days',
+        );
+        foreach ( $wd_numbers as $key ) {
+            if ( isset( $_POST[ 'wd_' . $key ] ) ) {
+                $wd[ $key ] = absint( $_POST[ 'wd_' . $key ] );
+            }
+        }
+        update_option( 'es_watchdog_settings', $wd );
+
         // Fulfillment mode.
         if ( isset( $_POST['es_fulfillment_mode'] ) ) {
             $mode = sanitize_text_field( wp_unslash( $_POST['es_fulfillment_mode'] ) );
@@ -353,6 +375,97 @@ class ES_Admin_Page {
                     <?php $this->render_number_row( 'default_width', __( 'Width (cm)', 'erpnext-shipping' ), $v( 'default_width', '15' ) ); ?>
                     <?php $this->render_number_row( 'default_height', __( 'Height (cm)', 'erpnext-shipping' ), $v( 'default_height', '10' ) ); ?>
                 </table>
+
+                <p class="submit">
+                    <input type="submit" name="es_shipping_save" class="button button-primary" value="<?php esc_attr_e( 'Save Settings', 'erpnext-shipping' ); ?>">
+                </p>
+
+                <!-- Order Alerts & Reminders -->
+                <div class="card" style="max-width:800px; margin-bottom:20px; padding:15px 20px;">
+                    <h2><?php esc_html_e( 'Order Alerts & Reminders', 'erpnext-shipping' ); ?></h2>
+                    <p class="description"><?php esc_html_e( 'Daily watchdog checks for stuck orders and sends pickup reminders to customers.', 'erpnext-shipping' ); ?></p>
+                    <?php
+                    $wd = get_option( 'es_watchdog_settings', array() );
+                    $wd_v = function( $key, $default = '' ) use ( $wd ) {
+                        return $wd[ $key ] ?? $default;
+                    };
+                    $wd_last = get_option( 'es_watchdog_last_run', 0 );
+                    ?>
+                    <?php if ( $wd_last ) : ?>
+                    <p style="font-size:12px; color:#666; margin-bottom:10px;">
+                        <?php printf( esc_html__( 'Last watchdog run: %s', 'erpnext-shipping' ), esc_html( date_i18n( 'Y-m-d H:i', $wd_last ) ) ); ?>
+                    </p>
+                    <?php endif; ?>
+
+                    <h3 style="margin:15px 0 8px;"><?php esc_html_e( 'Admin Alerts (daily digest email)', 'erpnext-shipping' ); ?></h3>
+                    <table class="form-table" style="margin-top:0;">
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'Processing stuck', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <label><input type="checkbox" name="wd_alert_processing" value="yes" <?php checked( $wd_v( 'alert_processing', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Enabled', 'erpnext-shipping' ); ?></label>
+                                &nbsp; <input type="number" name="wd_processing_days" value="<?php echo esc_attr( $wd_v( 'processing_days', 3 ) ); ?>" min="1" max="30" style="width:60px;"> <?php esc_html_e( 'days', 'erpnext-shipping' ); ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'Processing LP stuck', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <label><input type="checkbox" name="wd_alert_processing_lp" value="yes" <?php checked( $wd_v( 'alert_processing_lp', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Enabled', 'erpnext-shipping' ); ?></label>
+                                &nbsp; <input type="number" name="wd_processing_lp_days" value="<?php echo esc_attr( $wd_v( 'processing_lp_days', 3 ) ); ?>" min="1" max="30" style="width:60px;"> <?php esc_html_e( 'days', 'erpnext-shipping' ); ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'On Hold stuck', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <label><input type="checkbox" name="wd_alert_on_hold" value="yes" <?php checked( $wd_v( 'alert_on_hold', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Enabled', 'erpnext-shipping' ); ?></label>
+                                &nbsp; <input type="number" name="wd_on_hold_days" value="<?php echo esc_attr( $wd_v( 'on_hold_days', 2 ) ); ?>" min="1" max="30" style="width:60px;"> <?php esc_html_e( 'days', 'erpnext-shipping' ); ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'Dispatched to Pickup stuck', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <label><input type="checkbox" name="wd_alert_dispatched_pickup" value="yes" <?php checked( $wd_v( 'alert_dispatched_pickup', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Enabled', 'erpnext-shipping' ); ?></label>
+                                &nbsp; <input type="number" name="wd_dispatched_pickup_days" value="<?php echo esc_attr( $wd_v( 'dispatched_pickup_days', 2 ) ); ?>" min="1" max="30" style="width:60px;"> <?php esc_html_e( 'days', 'erpnext-shipping' ); ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'Shipped not delivered', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <label><input type="checkbox" name="wd_alert_shipped" value="yes" <?php checked( $wd_v( 'alert_shipped', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Enabled', 'erpnext-shipping' ); ?></label>
+                                &nbsp; <input type="number" name="wd_shipped_days" value="<?php echo esc_attr( $wd_v( 'shipped_days', 7 ) ); ?>" min="1" max="60" style="width:60px;"> <?php esc_html_e( 'days', 'erpnext-shipping' ); ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'Courier API failures', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <label><input type="checkbox" name="wd_alert_api_failures" value="yes" <?php checked( $wd_v( 'alert_api_failures', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Enabled', 'erpnext-shipping' ); ?></label>
+                                &nbsp; <input type="number" name="wd_api_fail_threshold" value="<?php echo esc_attr( $wd_v( 'api_fail_threshold', 3 ) ); ?>" min="1" max="20" style="width:60px;"> <?php esc_html_e( 'consecutive failures', 'erpnext-shipping' ); ?>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <h3 style="margin:20px 0 8px;"><?php esc_html_e( 'Customer Pickup Reminders', 'erpnext-shipping' ); ?></h3>
+                    <table class="form-table" style="margin-top:0;">
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'Pickup reminders', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <label><input type="checkbox" name="wd_alert_pickup_reminder" value="yes" <?php checked( $wd_v( 'alert_pickup_reminder', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Enabled', 'erpnext-shipping' ); ?></label>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'First reminder', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <input type="number" name="wd_pickup_reminder_1_days" value="<?php echo esc_attr( $wd_v( 'pickup_reminder_1_days', 3 ) ); ?>" min="1" max="30" style="width:60px;"> <?php esc_html_e( 'days after ready for pickup', 'erpnext-shipping' ); ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'Second reminder', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <input type="number" name="wd_pickup_reminder_2_days" value="<?php echo esc_attr( $wd_v( 'pickup_reminder_2_days', 10 ) ); ?>" min="1" max="60" style="width:60px;"> <?php esc_html_e( 'days after ready for pickup', 'erpnext-shipping' ); ?>
+                            </td>
+                        </tr>
+                    </table>
+                    <p class="description"><?php esc_html_e( 'Pickup reminder emails can be customized in WooCommerce → Settings → Emails → Pickup Reminder.', 'erpnext-shipping' ); ?></p>
+                </div>
 
                 <p class="submit">
                     <input type="submit" name="es_shipping_save" class="button button-primary" value="<?php esc_attr_e( 'Save Settings', 'erpnext-shipping' ); ?>">

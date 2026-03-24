@@ -133,6 +133,7 @@ class ES_Fulfillment_Cron {
             // order from jumping to delivered when only one parcel arrives.
             $item_statuses   = array();
             $raw_statuses    = array();
+            $had_failure     = false;
 
             foreach ( $items as $item ) {
                 $provider = $item['tracking_provider'] ?? '';
@@ -155,6 +156,18 @@ class ES_Fulfillment_Cron {
                     if ( $result['wc_status'] ) {
                         $item_statuses[] = $result['wc_status'];
                     }
+                } elseif ( ! empty( $provider ) ) {
+                    // API call returned null — record failure.
+                    $had_failure = true;
+                }
+            }
+
+            // Track consecutive API failures for watchdog alerts.
+            if ( class_exists( 'ES_Fulfillment_Watchdog' ) ) {
+                if ( $had_failure ) {
+                    ES_Fulfillment_Watchdog::record_poll_failure( $order );
+                } elseif ( ! empty( $raw_statuses ) ) {
+                    ES_Fulfillment_Watchdog::reset_poll_failure( $order );
                 }
             }
 

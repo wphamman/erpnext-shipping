@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.9.1
+ * Version: 1.10.0
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Text Domain: erpnext-shipping
@@ -12,7 +12,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.9.1' );
+define( 'ES_SHIPPING_VERSION', '1.10.0' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // Add custom 15-minute cron interval (registered early so activation hook can use it).
@@ -75,6 +75,7 @@ function es_fulfillment_init() {
         require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-admin.php';
         require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-cron.php';
         require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-checkout.php';
+        require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-watchdog.php';
     }
 }
 
@@ -94,6 +95,7 @@ add_filter( 'woocommerce_email_classes', function ( $emails ) {
     require_once ES_SHIPPING_PATH . 'includes/class-es-email-dispatched-pickup.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-email-ready-pickup.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-email-picked-up.php';
+    require_once ES_SHIPPING_PATH . 'includes/class-es-email-pickup-reminder.php';
 
     $emails['ES_Email_Partially_Shipped']  = new ES_Email_Partially_Shipped();
     $emails['ES_Email_Order_Delivered']    = new ES_Email_Order_Delivered();
@@ -101,6 +103,7 @@ add_filter( 'woocommerce_email_classes', function ( $emails ) {
     $emails['ES_Email_Dispatched_Pickup'] = new ES_Email_Dispatched_Pickup();
     $emails['ES_Email_Ready_Pickup']      = new ES_Email_Ready_Pickup();
     $emails['ES_Email_Picked_Up']         = new ES_Email_Picked_Up();
+    $emails['ES_Email_Pickup_Reminder']   = new ES_Email_Pickup_Reminder();
 
     return $emails;
 } );
@@ -366,6 +369,9 @@ function es_shipping_activate() {
         if ( ! wp_next_scheduled( 'es_fulfillment_tracking_poll' ) ) {
             wp_schedule_event( time(), 'es_every_15_min', 'es_fulfillment_tracking_poll' );
         }
+        if ( ! wp_next_scheduled( 'es_fulfillment_watchdog' ) ) {
+            wp_schedule_event( time(), 'daily', 'es_fulfillment_watchdog' );
+        }
         update_option( 'wc_plugin_advanced_shipment_tracking', 'yes' );
     }
 }
@@ -374,6 +380,7 @@ register_activation_hook( __FILE__, 'es_shipping_activate' );
 function es_shipping_deactivate() {
     wp_clear_scheduled_hook( 'es_shipping_stock_sync' );
     wp_clear_scheduled_hook( 'es_fulfillment_tracking_poll' );
+    wp_clear_scheduled_hook( 'es_fulfillment_watchdog' );
 }
 register_deactivation_hook( __FILE__, 'es_shipping_deactivate' );
 
@@ -390,11 +397,17 @@ add_action( 'admin_init', function () {
         if ( ! wp_next_scheduled( 'es_fulfillment_tracking_poll' ) ) {
             wp_schedule_event( time(), 'es_every_15_min', 'es_fulfillment_tracking_poll' );
         }
+        if ( ! wp_next_scheduled( 'es_fulfillment_watchdog' ) ) {
+            wp_schedule_event( time(), 'daily', 'es_fulfillment_watchdog' );
+        }
         update_option( 'wc_plugin_advanced_shipment_tracking', 'yes' );
     } else {
-        // Migration mode — clear fulfillment cron if scheduled.
+        // Migration mode — clear fulfillment crons if scheduled.
         if ( wp_next_scheduled( 'es_fulfillment_tracking_poll' ) ) {
             wp_clear_scheduled_hook( 'es_fulfillment_tracking_poll' );
+        }
+        if ( wp_next_scheduled( 'es_fulfillment_watchdog' ) ) {
+            wp_clear_scheduled_hook( 'es_fulfillment_watchdog' );
         }
     }
 } );
@@ -450,6 +463,14 @@ add_action( 'es_shipping_stock_sync', function () {
             error_log( '[ERPNext Shipping] ERROR: Instance ' . $instance_id . ' sync failed: ' . $e->getMessage() );
         }
     }
+} );
+
+// Hook the daily watchdog action.
+add_action( 'es_fulfillment_watchdog', function () {
+    if ( ! class_exists( 'ES_Fulfillment_Watchdog' ) ) {
+        require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-watchdog.php';
+    }
+    ES_Fulfillment_Watchdog::run();
 } );
 
 // Hook the fulfillment tracking poll action.

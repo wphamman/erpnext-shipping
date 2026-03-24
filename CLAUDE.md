@@ -99,7 +99,9 @@ erpnext-shipping/
 │   ├── class-es-email-order-delivered.php
 │   ├── class-es-email-processing-lp.php
 │   ├── class-es-email-ready-pickup.php
-│   └── class-es-email-picked-up.php
+│   ├── class-es-email-picked-up.php
+│   ├── class-es-email-pickup-reminder.php  # Automated pickup collection reminders
+│   └── class-es-fulfillment-watchdog.php   # Daily stale order alerts + pickup reminders
 ├── README.md
 ├── LICENSE
 ├── CHANGELOG.md
@@ -128,6 +130,7 @@ erpnext-shipping/
 - Email templates: all 6 fulfillment emails use `wc_get_template_html()` with files in `templates/emails/`. Override via `yourtheme/woocommerce/emails/`. Subject and heading customizable in WC Settings > Emails.
 - Legacy provider aliases: `collivery` and `the-courier-guy-sa` map to the same tracking URLs as their modern equivalents
 - Pickup flow: Processing LP → Dispatched to Pickup → Ready for Pickup → Picked Up (4 steps)
+- Watchdog: daily cron (`es_fulfillment_watchdog`) checks for stale orders and sends pickup reminders. Settings stored in `es_watchdog_settings` WP option. Tracks consecutive API failures via `_es_poll_fail_count` order meta. Pickup reminder tracking via `_es_pickup_reminder_sent` order meta (0=none, 1=first, 2=second).
 
 ## Security Checklist
 - [ ] No hardcoded credentials or API keys

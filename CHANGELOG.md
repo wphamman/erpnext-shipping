@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.10.0] - 2026-03-24
+
+### Added
+- **Order Watchdog**: daily cron monitors for stuck orders across all non-terminal statuses. Sends admin digest email listing all stuck orders with configurable thresholds per status.
+- **Customer Pickup Reminders**: automated emails at configurable intervals (default 3 and 10 days) after an order enters Ready for Pickup. Uses WooCommerce email template system (customizable via WooCommerce Settings > Emails > Pickup Reminder).
+- **Courier API failure tracking**: consecutive poll failures per order are tracked via `_es_poll_fail_count` meta. Watchdog alerts admin when threshold is exceeded. Counter resets on successful poll.
+- **Alerts settings section**: new admin UI section with per-status enable/disable toggles and configurable day thresholds.
+- New WC email class: `ES_Email_Pickup_Reminder` with HTML and plain text templates (theme-overridable).
+
+### Changed
+- Cron polling now records API failures and successes for watchdog integration.
+
 ## [1.9.1] - 2026-03-23
 
 ### Fixed
