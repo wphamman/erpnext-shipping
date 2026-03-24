@@ -80,7 +80,7 @@ class ES_Fulfillment_Watchdog {
 
             $days       = absint( $settings[ $check['key'] ] ?? 3 );
             $cutoff     = gmdate( 'Y-m-d H:i:s', strtotime( "-{$days} days" ) );
-            $stale      = self::get_stale_orders( $check['status'], $cutoff );
+            $stale      = self::get_stale_orders( $check['status'], $cutoff, $days );
 
             if ( ! empty( $stale ) ) {
                 $admin_alerts[] = array(
@@ -123,14 +123,16 @@ class ES_Fulfillment_Watchdog {
 
     /**
      * Get orders stuck in a status since before the cutoff date.
+     * Uses date_modified (updated on status changes) rather than date_created
+     * to avoid false positives for orders that recently changed status.
      */
-    private static function get_stale_orders( $status, $cutoff ) {
+    private static function get_stale_orders( $status, $cutoff, $days = 3 ) {
         $orders = wc_get_orders( array(
-            'status'       => $status,
-            'date_created' => '<' . $cutoff,
-            'limit'        => 50,
-            'orderby'      => 'date',
-            'order'        => 'ASC',
+            'status'        => $status,
+            'date_modified' => '<' . $cutoff,
+            'limit'         => 50,
+            'orderby'       => 'date',
+            'order'         => 'ASC',
         ) );
 
         $result = array();
@@ -227,16 +229,26 @@ class ES_Fulfillment_Watchdog {
      * Value: 0 = none, 1 = first sent, 2 = second sent.
      */
     private static function send_pickup_reminders( $days_1, $days_2, $logger, $ctx ) {
+        if ( ! function_exists( 'WC' ) || ! WC()->mailer() ) {
+            $logger->error( 'WooCommerce mailer not available — skipping pickup reminders.', $ctx );
+            return;
+        }
+
         $wc_emails = WC()->mailer()->get_emails();
+
+        if ( ! isset( $wc_emails['ES_Email_Pickup_Reminder'] ) ) {
+            $logger->error( 'ES_Email_Pickup_Reminder class not available — skipping reminders.', $ctx );
+            return;
+        }
+
+        $reminder_email = $wc_emails['ES_Email_Pickup_Reminder'];
 
         // Reminder 1: orders in ready-pickup for >= $days_1 days, not yet reminded.
         $cutoff_1 = gmdate( 'Y-m-d H:i:s', strtotime( "-{$days_1} days" ) );
         $orders_1 = self::get_ready_pickup_orders( $cutoff_1, 0 );
 
         foreach ( $orders_1 as $order ) {
-            if ( isset( $wc_emails['ES_Email_Pickup_Reminder'] ) ) {
-                $wc_emails['ES_Email_Pickup_Reminder']->trigger( $order->get_id(), $order, 1 );
-            }
+            $reminder_email->trigger( $order->get_id(), $order, 1 );
             $order->update_meta_data( '_es_pickup_reminder_sent', 1 );
             $order->save();
             $logger->info( 'Pickup reminder 1 sent for order #' . $order->get_order_number(), $ctx );
@@ -247,9 +259,7 @@ class ES_Fulfillment_Watchdog {
         $orders_2 = self::get_ready_pickup_orders( $cutoff_2, 1 );
 
         foreach ( $orders_2 as $order ) {
-            if ( isset( $wc_emails['ES_Email_Pickup_Reminder'] ) ) {
-                $wc_emails['ES_Email_Pickup_Reminder']->trigger( $order->get_id(), $order, 2 );
-            }
+            $reminder_email->trigger( $order->get_id(), $order, 2 );
             $order->update_meta_data( '_es_pickup_reminder_sent', 2 );
             $order->save();
             $logger->info( 'Pickup reminder 2 sent for order #' . $order->get_order_number(), $ctx );
@@ -287,15 +297,16 @@ class ES_Fulfillment_Watchdog {
         }
 
         return wc_get_orders( array(
-            'status'       => 'ready-pickup',
-            'date_created' => '<' . $cutoff,
-            'meta_query'   => $meta_query,
-            'limit'        => 50,
+            'status'        => 'ready-pickup',
+            'date_modified' => '<' . $cutoff,
+            'meta_query'    => $meta_query,
+            'limit'         => 50,
         ) );
     }
 
     /**
      * Record a poll failure for an order. Called from the cron class.
+     * NOTE: Caller must call $order->save() to persist the meta change.
      */
     public static function record_poll_failure( $order ) {
         $count = absint( $order->get_meta( '_es_poll_fail_count', true ) );
@@ -304,6 +315,7 @@ class ES_Fulfillment_Watchdog {
 
     /**
      * Reset poll failure count (called when a poll succeeds).
+     * NOTE: Caller must call $order->save() to persist the meta change.
      */
     public static function reset_poll_failure( $order ) {
         $fail_count = $order->get_meta( '_es_poll_fail_count', true );
