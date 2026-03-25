@@ -27,6 +27,12 @@ Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routin
 - **Collection points** — pickup-only locations without ERPNext warehouse mapping (e.g. partner breweries, taprooms)
 - **Fulfillment emails** — Processing LP, Dispatched to Pickup, Ready For Pickup (with location address + customer message), Picked Up, Partially Shipped, Delivered. All use WooCommerce template system — customizable via theme overrides and WC Settings > Emails.
 - **Tracking in emails** — clickable tracking links injected into Shipped and Invoice WC core emails; our own emails render tracking inline via templates
+- **My Account tracking** — tracking info displayed on customer's order view and orders list
+- **Order watchdog** — daily cron monitors stuck orders across all non-terminal statuses; sends admin digest email with configurable per-status thresholds
+- **Pickup reminders** — automated customer emails at configurable intervals (default 3 and 10 days) after order is ready for pickup; WC email template, customizable via WC Settings > Emails
+- **API failure alerts** — tracks consecutive courier API poll failures per order; alerts admin when threshold is exceeded
+- **Packing slip** — print-friendly packing slip accessible from order list (quick action) and order detail (meta box button); includes customer notes, items table, weights, pickup/delivery destination; auto-triggers print dialog
+- **Customer note column** — order list column showing truncated customer notes with full text on hover
 
 ## Requirements
 
@@ -105,6 +111,26 @@ Scroll to the **Fulfillment Module** section at the bottom of the settings page.
 4. Switch to Active mode
 5. Statuses survive because the plugin owns the same slugs — no mass email
 
+### 6. Order Alerts & Reminders
+
+Scroll to the **Order Alerts & Reminders** section on the settings page.
+
+**Admin alerts** (daily digest email):
+- Processing stuck (default: 3 days)
+- Processing LP stuck (default: 3 days)
+- On Hold stuck (default: 2 days)
+- Dispatched to Pickup stuck (default: 2 days)
+- Shipped not delivered (default: 7 days)
+- Courier API failures (default: 3 consecutive failures)
+
+Each alert can be enabled/disabled independently with configurable day thresholds. All triggered alerts are sent in a single daily digest email to the site admin.
+
+**Customer pickup reminders**:
+- First reminder (default: 3 days after Ready for Pickup)
+- Second reminder (default: 10 days after Ready for Pickup)
+
+Pickup reminder emails are WC email templates — customize subject, heading, and content via **WooCommerce > Settings > Emails > Pickup Reminder**.
+
 ## How It Works
 
 1. Customer enters their address at checkout
@@ -165,7 +191,9 @@ erpnext-shipping/
 │   ├── class-es-email-processing-lp.php
 │   ├── class-es-email-dispatched-pickup.php
 │   ├── class-es-email-ready-pickup.php
-│   └── class-es-email-picked-up.php
+│   ├── class-es-email-picked-up.php
+│   ├── class-es-email-pickup-reminder.php  # Automated pickup collection reminders
+│   └── class-es-fulfillment-watchdog.php   # Daily stale order alerts + pickup reminders
 ├── templates/
 │   └── emails/                              # WC email templates (theme-overridable)
 │       ├── es-processing-lp.php
@@ -174,8 +202,9 @@ erpnext-shipping/
 │       ├── es-picked-up.php
 │       ├── es-partially-shipped.php
 │       ├── es-order-delivered.php
+│       ├── es-pickup-reminder.php
 │       └── plain/                           # Plain text versions
-│           └── (same filenames)
+│           └── (same filenames + es-pickup-reminder.php)
 ├── README.md
 ├── LICENSE
 ├── CHANGELOG.md
