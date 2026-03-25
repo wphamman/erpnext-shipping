@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.10.1] - 2026-03-25
+
+### Added
+- **Pickup location on order detail**: shows pickup location name + address below the shipping section for pickup orders.
+- **Pickup location on order list**: tracking column displays the pickup location for pickup orders (instead of "–").
+- **Print Packing Slip**: new quick action button on order list opens a clean, print-friendly packing slip with customer notes, SKUs, quantities, weights. Shows pickup location for pickup orders or shipping address for delivery orders. Auto-triggers print dialog.
+
 ## [1.10.0] - 2026-03-24
 
 ### Added
