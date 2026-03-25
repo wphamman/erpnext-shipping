@@ -1102,8 +1102,11 @@ class ES_Fulfillment_Admin {
         $location_id = sanitize_text_field( $_POST['pickup_location_id'] ?? '' );
         if ( empty( $location_id ) ) {
             $order->delete_meta_data( '_es_pickup_location_id' );
-        } else {
+        } elseif ( ES_Fulfillment_Checkout::is_valid_pickup_location( $location_id ) ) {
             $order->update_meta_data( '_es_pickup_location_id', $location_id );
+        } else {
+            wp_send_json_error( 'Invalid pickup location.' );
+            return;
         }
         $order->save();
 

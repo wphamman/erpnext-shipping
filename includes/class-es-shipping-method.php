@@ -659,8 +659,14 @@ class ES_Shipping_Method extends WC_Shipping_Method {
         $items = array();
         foreach ( $package['contents'] as $item ) {
             $product = $item['data'];
+            // Use SKU for stock lookup. Fall back to product ID for SKU-less products
+            // to prevent them from collapsing into the same empty-key lookup.
+            $sku = $product->get_sku();
+            if ( empty( $sku ) ) {
+                $sku = '_pid_' . $product->get_id();
+            }
             $items[] = array(
-                'sku'      => $product->get_sku(),
+                'sku'      => $sku,
                 'qty'      => $item['quantity'],
                 'weight'   => floatval( $product->get_weight() ),
                 'length'   => floatval( $product->get_length() ),

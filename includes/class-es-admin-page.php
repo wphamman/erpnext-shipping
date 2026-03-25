@@ -15,14 +15,35 @@ class ES_Admin_Page {
 
     /**
      * Auto-detect the WC shipping method instance ID.
+     * If multiple instances exist and ?es_instance=ID is set, use that.
+     * Otherwise falls back to the first enabled instance.
      */
     public function detect_instance() {
         global $wpdb;
-        $row = $wpdb->get_row(
-            "SELECT instance_id FROM {$wpdb->prefix}woocommerce_shipping_zone_methods WHERE method_id = 'erpnext_shipping' AND is_enabled = 1 ORDER BY instance_id ASC LIMIT 1"
+
+        // Get all enabled instances.
+        $rows = $wpdb->get_results(
+            "SELECT instance_id FROM {$wpdb->prefix}woocommerce_shipping_zone_methods WHERE method_id = 'erpnext_shipping' AND is_enabled = 1 ORDER BY instance_id ASC"
         );
-        if ( $row ) {
-            $this->instance_id = intval( $row->instance_id );
+
+        $this->all_instances = array();
+        foreach ( $rows as $r ) {
+            $this->all_instances[] = intval( $r->instance_id );
+        }
+
+        // If user selected a specific instance, use it (validated against known instances).
+        if ( isset( $_GET['es_instance'] ) ) {
+            $requested = intval( $_GET['es_instance'] );
+            if ( in_array( $requested, $this->all_instances, true ) ) {
+                $this->instance_id = $requested;
+                $this->option_key  = 'woocommerce_erpnext_shipping_' . $this->instance_id . '_settings';
+                return;
+            }
+        }
+
+        // Default to first enabled instance.
+        if ( ! empty( $this->all_instances ) ) {
+            $this->instance_id = $this->all_instances[0];
             $this->option_key  = 'woocommerce_erpnext_shipping_' . $this->instance_id . '_settings';
         }
     }
@@ -185,14 +206,18 @@ class ES_Admin_Page {
                 if ( 'active' === $mode && 'active' !== $prev_mode ) {
                     // Enable AST compat flag so woocommerce_fusion reads tracking meta.
                     update_option( 'wc_plugin_advanced_shipment_tracking', 'yes' );
-                    // Schedule fulfillment cron if not already scheduled.
+                    // Schedule fulfillment crons if not already scheduled.
                     if ( ! wp_next_scheduled( 'es_fulfillment_tracking_poll' ) ) {
                         wp_schedule_event( time(), 'es_every_15_min', 'es_fulfillment_tracking_poll' );
                     }
+                    if ( ! wp_next_scheduled( 'es_fulfillment_watchdog' ) ) {
+                        wp_schedule_event( time(), 'daily', 'es_fulfillment_watchdog' );
+                    }
                 } elseif ( 'migration' === $mode && 'migration' !== $prev_mode ) {
                     // Leave wc_plugin_advanced_shipment_tracking alone — AST Pro owns it in migration mode.
-                    // Unschedule fulfillment cron (old plugins handle their own polling).
+                    // Unschedule fulfillment crons (old plugins handle their own polling).
                     wp_clear_scheduled_hook( 'es_fulfillment_tracking_poll' );
+                    wp_clear_scheduled_hook( 'es_fulfillment_watchdog' );
                 }
             }
         }
@@ -228,6 +253,19 @@ class ES_Admin_Page {
         ?>
         <div class="wrap">
             <h1><?php esc_html_e( 'ERPNext Shipping', 'erpnext-shipping' ); ?></h1>
+
+            <?php if ( count( $this->all_instances ?? array() ) > 1 ) : ?>
+                <p style="margin-bottom:10px;">
+                    <strong><?php esc_html_e( 'Shipping Instance:', 'erpnext-shipping' ); ?></strong>
+                    <?php foreach ( $this->all_instances as $iid ) : ?>
+                        <?php if ( $iid === $this->instance_id ) : ?>
+                            <span style="padding:3px 10px; background:#2271b1; color:#fff; border-radius:3px; margin-right:4px;"><?php echo esc_html( $iid ); ?></span>
+                        <?php else : ?>
+                            <a href="<?php echo esc_url( admin_url( 'admin.php?page=es-shipping&es_instance=' . $iid ) ); ?>" style="padding:3px 10px; background:#f0f0f1; border-radius:3px; margin-right:4px; text-decoration:none;"><?php echo esc_html( $iid ); ?></a>
+                        <?php endif; ?>
+                    <?php endforeach; ?>
+                </p>
+            <?php endif; ?>
 
             <?php if ( $saved ) : ?>
                 <div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'erpnext-shipping' ); ?></p></div>

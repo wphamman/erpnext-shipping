@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.10.2] - 2026-03-25
+
+### Fixed
+- **High: Stock sync restore path** — products previously marked out-of-stock by the sync now have their WC core stock quantity and status restored when ERPNext stock comes back.
+- **High: Pickup location validation** — checkout, AJAX session save, and admin-side pickup location save now validate the location ID against configured pickup-enabled locations. Invalid IDs are rejected.
+- **Medium: SKU-less products** — products without SKUs no longer collapse into the same empty-key stock lookup. Each gets a unique `_pid_{ID}` fallback key for fulfillment routing.
+- **Medium: Multi-instance admin page** — settings page now supports multiple WooCommerce shipping zone instances. If more than one instance exists, an instance selector appears at the top of the page.
+- **Low: Watchdog cron on mode switch** — switching between Migration and Active mode in admin now immediately schedules/clears the daily watchdog cron alongside the 15-minute polling cron.
+
 ## [1.10.1] - 2026-03-25
 
 ### Added

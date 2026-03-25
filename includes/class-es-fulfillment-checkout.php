@@ -160,6 +160,8 @@ class ES_Fulfillment_Checkout {
         $location_id = sanitize_text_field( $_POST['es_pickup_location_id'] ?? '' );
         if ( empty( $location_id ) ) {
             wc_add_notice( __( 'Please select a pickup location.', 'erpnext-shipping' ), 'error' );
+        } elseif ( ! self::is_valid_pickup_location( $location_id ) ) {
+            wc_add_notice( __( 'Invalid pickup location selected.', 'erpnext-shipping' ), 'error' );
         }
     }
 
@@ -168,7 +170,7 @@ class ES_Fulfillment_Checkout {
      */
     public static function save_pickup_location( $order, $data ) {
         $location_id = sanitize_text_field( $_POST['es_pickup_location_id'] ?? '' );
-        if ( ! empty( $location_id ) ) {
+        if ( ! empty( $location_id ) && self::is_valid_pickup_location( $location_id ) ) {
             $order->update_meta_data( '_es_pickup_location_id', $location_id );
         }
     }
@@ -215,6 +217,11 @@ class ES_Fulfillment_Checkout {
     public static function ajax_save_checkout_pickup() {
         check_ajax_referer( 'es_checkout_pickup' );
         $location_id = sanitize_text_field( $_POST['location_id'] ?? '' );
+        // Allow empty (clearing selection) or valid location IDs only.
+        if ( ! empty( $location_id ) && ! self::is_valid_pickup_location( $location_id ) ) {
+            wp_send_json_error( 'Invalid pickup location.' );
+            return;
+        }
         if ( WC()->session ) {
             WC()->session->set( 'es_pickup_location_id', $location_id );
         }
@@ -237,6 +244,19 @@ class ES_Fulfillment_Checkout {
         .es-pickup-message { color: #666; font-style: italic; margin-top: 4px; }
         </style>
         <?php
+    }
+
+    /**
+     * Check if a location ID is a valid, pickup-enabled location.
+     */
+    public static function is_valid_pickup_location( $location_id ) {
+        $locations = get_option( 'es_shipping_locations', array() );
+        foreach ( $locations as $loc ) {
+            if ( ( $loc['id'] ?? '' ) === $location_id && ! empty( $loc['pickup_enabled'] ) ) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 

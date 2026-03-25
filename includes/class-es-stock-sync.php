@@ -214,9 +214,23 @@ class ES_Stock_Sync {
             wp_set_object_terms( $product_id, $term_ids, 'location', false );
 
             // Write per-location stock quantities.
+            $total_qty = 0;
             foreach ( $map as $loc_id => $term_id ) {
                 $qty = intval( $location_qtys[ $loc_id ] ?? 0 );
                 update_post_meta( $product_id, '_stock_at_' . $term_id, $qty );
+                $total_qty += $qty;
+            }
+
+            // Restore WC core stock if product was previously depleted.
+            // This is the inverse of the depletion path below.
+            $product = wc_get_product( $product_id );
+            if ( $product && $product->managing_stock() && $total_qty > 0 ) {
+                $current_stock = (int) $product->get_stock_quantity();
+                if ( $current_stock <= 0 || 'outofstock' === $product->get_stock_status() ) {
+                    wc_update_product_stock( $product_id, $total_qty );
+                    $product->set_stock_status( 'instock' );
+                    $product->save();
+                }
             }
 
             $updated++;
