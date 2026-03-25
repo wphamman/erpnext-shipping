@@ -74,16 +74,18 @@ class ES_Fulfillment_Admin {
             $new_columns[ $key ] = $label;
             // Insert after 'order_total' or 'order_status'.
             if ( 'order_total' === $key ) {
-                $new_columns['es_ship_method'] = __( 'Shipping Method', 'erpnext-shipping' );
-                $new_columns['es_tracking']    = __( 'Shipment Tracking', 'erpnext-shipping' );
-                $new_columns['es_status']      = __( 'Shipment Status', 'erpnext-shipping' );
+                $new_columns['es_ship_method']   = __( 'Shipping Method', 'erpnext-shipping' );
+                $new_columns['es_customer_note'] = __( 'Customer Note', 'erpnext-shipping' );
+                $new_columns['es_tracking']      = __( 'Shipment Tracking', 'erpnext-shipping' );
+                $new_columns['es_status']        = __( 'Shipment Status', 'erpnext-shipping' );
             }
         }
         // Fallback if order_total wasn't found.
         if ( ! isset( $new_columns['es_tracking'] ) ) {
-            $new_columns['es_ship_method'] = __( 'Shipping Method', 'erpnext-shipping' );
-            $new_columns['es_tracking']    = __( 'Shipment Tracking', 'erpnext-shipping' );
-            $new_columns['es_status']      = __( 'Shipment Status', 'erpnext-shipping' );
+            $new_columns['es_ship_method']   = __( 'Shipping Method', 'erpnext-shipping' );
+            $new_columns['es_customer_note'] = __( 'Customer Note', 'erpnext-shipping' );
+            $new_columns['es_tracking']      = __( 'Shipment Tracking', 'erpnext-shipping' );
+            $new_columns['es_status']        = __( 'Shipment Status', 'erpnext-shipping' );
         }
         return $new_columns;
     }
@@ -94,6 +96,8 @@ class ES_Fulfillment_Admin {
     public static function render_order_column( $column_name, $order ) {
         if ( 'es_ship_method' === $column_name ) {
             self::render_ship_method_column( $order );
+        } elseif ( 'es_customer_note' === $column_name ) {
+            self::render_customer_note_column( $order );
         } elseif ( 'es_tracking' === $column_name ) {
             self::render_tracking_column( $order );
         } elseif ( 'es_status' === $column_name ) {
@@ -105,7 +109,7 @@ class ES_Fulfillment_Admin {
      * Render column content — Legacy (receives column name and post ID).
      */
     public static function render_order_column_legacy( $column_name, $post_id ) {
-        if ( ! in_array( $column_name, array( 'es_ship_method', 'es_tracking', 'es_status' ), true ) ) {
+        if ( ! in_array( $column_name, array( 'es_ship_method', 'es_customer_note', 'es_tracking', 'es_status' ), true ) ) {
             return;
         }
         $order = wc_get_order( $post_id );
@@ -115,6 +119,8 @@ class ES_Fulfillment_Admin {
         }
         if ( 'es_ship_method' === $column_name ) {
             self::render_ship_method_column( $order );
+        } elseif ( 'es_customer_note' === $column_name ) {
+            self::render_customer_note_column( $order );
         } elseif ( 'es_tracking' === $column_name ) {
             self::render_tracking_column( $order );
         } else {
@@ -137,6 +143,16 @@ class ES_Fulfillment_Admin {
         foreach ( $methods as $method ) {
             echo esc_html( $method->get_method_title() ) . '<br>';
         }
+    }
+
+    private static function render_customer_note_column( $order ) {
+        $note = $order->get_customer_note();
+        if ( empty( $note ) ) {
+            echo '&ndash;';
+            return;
+        }
+        $truncated = mb_strlen( $note ) > 50 ? mb_substr( $note, 0, 50 ) . '...' : $note;
+        echo '<span class="es-customer-note" title="' . esc_attr( $note ) . '">' . esc_html( $truncated ) . '</span>';
     }
 
     private static function render_tracking_column( $order ) {
@@ -506,8 +522,12 @@ class ES_Fulfillment_Admin {
         .es-courier-badge { font-size: 12px; line-height: 1.6; white-space: nowrap; }
         .es-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; margin-right: 3px; }
 
+        /* Customer note column */
+        .es-customer-note { font-size: 12px; color: #666; line-height: 1.4; display: block; cursor: help; }
+
         /* Column widths */
         .column-es_ship_method { width: 130px; }
+        .column-es_customer_note { width: 160px; }
         .column-es_tracking { width: 180px; }
         .column-es_status { width: 140px; }
 
@@ -881,6 +901,20 @@ class ES_Fulfillment_Admin {
                 </button>
             </p>
         <?php endif; ?>
+
+        <hr style="margin:12px 0;">
+        <?php
+        $slip_url = wp_nonce_url(
+            admin_url( 'admin-ajax.php?action=es_packing_slip&order_id=' . $order_id ),
+            'es_packing_' . $order_id
+        );
+        ?>
+        <p>
+            <a href="<?php echo esc_url( $slip_url ); ?>" target="_blank" class="button" style="width:100%; text-align:center;">
+                <span class="dashicons dashicons-media-text" style="vertical-align:middle; margin-right:4px;"></span>
+                <?php esc_html_e( 'Print Packing Slip', 'erpnext-shipping' ); ?>
+            </a>
+        </p>
 
         <script>
         jQuery(function($) {

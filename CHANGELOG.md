@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.10.3] - 2026-03-25
+
+### Added
+- **Customer Note column** on order list — shows truncated note (50 chars) with full text on hover. Placed after Shipping Method column.
+- **Print Packing Slip button on order detail page** — full-width button in the Shipment Tracking meta box, opens print page in new tab.
+
 ## [1.10.2] - 2026-03-25
 
 ### Fixed
