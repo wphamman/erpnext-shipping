@@ -167,8 +167,28 @@ class ES_Fulfillment_Checkout {
 
     /**
      * Save pickup location to order meta during checkout.
+     * Only saves when the customer actually selected Local Pickup as the shipping method.
      */
     public static function save_pickup_location( $order, $data ) {
+        // Only save pickup location if the order's shipping method is local_pickup.
+        // This prevents session-leaked pickup selections from being saved on delivery orders.
+        $is_pickup = false;
+        $chosen_methods = WC()->session ? WC()->session->get( 'chosen_shipping_methods', array() ) : array();
+        foreach ( $chosen_methods as $method ) {
+            if ( str_contains( $method, 'local_pickup' ) ) {
+                $is_pickup = true;
+                break;
+            }
+        }
+
+        if ( ! $is_pickup ) {
+            // Clear any session-leaked pickup location and don't save to order.
+            if ( WC()->session ) {
+                WC()->session->set( 'es_pickup_location_id', '' );
+            }
+            return;
+        }
+
         $location_id = sanitize_text_field( $_POST['es_pickup_location_id'] ?? '' );
         if ( ! empty( $location_id ) && self::is_valid_pickup_location( $location_id ) ) {
             $order->update_meta_data( '_es_pickup_location_id', $location_id );
@@ -178,6 +198,8 @@ class ES_Fulfillment_Checkout {
     /**
      * Auto-set Processing LP status for pickup orders.
      * Fires when order moves to 'processing' (after payment).
+     * ONLY triggers when the shipping method is local_pickup — never from pickup meta alone,
+     * as session-leaked meta can exist on delivery orders.
      */
     public static function maybe_set_processing_lp( $order_id, $order ) {
         if ( ! $order ) {
@@ -187,7 +209,9 @@ class ES_Fulfillment_Checkout {
             return;
         }
 
-        // Check if this is a pickup order by looking at shipping methods.
+        // Check if this is a pickup order by looking at shipping methods ONLY.
+        // Do NOT fall back to checking _es_pickup_location_id meta — that can be
+        // leaked from a previous session when customer browsed pickup then chose shipping.
         $shipping_methods = $order->get_shipping_methods();
         $is_pickup = false;
         foreach ( $shipping_methods as $method ) {
@@ -197,16 +221,20 @@ class ES_Fulfillment_Checkout {
             }
         }
 
-        // Also check if a pickup location was set.
-        if ( ! $is_pickup ) {
-            $pickup_loc = $order->get_meta( '_es_pickup_location_id', true );
-            if ( ! empty( $pickup_loc ) ) {
-                $is_pickup = true;
+        // Also handle orders with no shipping methods but local_pickup in chosen methods.
+        if ( ! $is_pickup && empty( $shipping_methods ) ) {
+            $chosen = $order->get_meta( '_chosen_shipping_methods', true );
+            if ( is_array( $chosen ) ) {
+                foreach ( $chosen as $m ) {
+                    if ( str_contains( (string) $m, 'local_pickup' ) ) {
+                        $is_pickup = true;
+                        break;
+                    }
+                }
             }
         }
 
         if ( $is_pickup ) {
-            // Change from processing to processing-lp.
             $order->update_status( 'processing-lp', __( 'Pickup order — moved to Processing LP.', 'erpnext-shipping' ) );
         }
     }

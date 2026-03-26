@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.10.4] - 2026-03-25
+
+### Fixed
+- **Critical: Delivery orders incorrectly entering pickup flow.** Session-leaked pickup location was saved to order meta even when customer chose a delivery shipping method. `maybe_set_processing_lp` now only triggers when the order's shipping method is `local_pickup` — never from pickup meta alone. `save_pickup_location` clears session and skips saving when shipping method is not local pickup.
+
 ## [1.10.3] - 2026-03-25
 
 ### Added
