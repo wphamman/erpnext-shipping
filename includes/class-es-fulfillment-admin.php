@@ -1312,11 +1312,26 @@ class ES_Fulfillment_Admin {
             $item_weight = $weight * $qty;
             $total_weight += $item_weight;
 
+            // Collect visible product addon/custom fields (non-internal meta).
+            $addons = array();
+            foreach ( $item->get_meta_data() as $meta ) {
+                $key = $meta->key;
+                // Skip internal WC meta (prefixed with _) and known system keys.
+                if ( str_starts_with( $key, '_' ) || in_array( $key, array( 'is_vat_exempt' ), true ) ) {
+                    continue;
+                }
+                $addons[] = array(
+                    'key'   => $key,
+                    'value' => $meta->value,
+                );
+            }
+
             $line_items[] = array(
                 'sku'     => $product ? $product->get_sku() : '',
                 'name'    => $item->get_name(),
                 'qty'     => $qty,
                 'weight'  => $item_weight,
+                'addons'  => $addons,
             );
         }
 
@@ -1346,6 +1361,9 @@ class ES_Fulfillment_Admin {
     td { padding: 8px 10px; border-bottom: 1px solid #eee; }
     td.qty, td.weight, th.qty, th.weight { text-align: center; }
     .totals { text-align: right; font-weight: 600; }
+    .item-addons { margin-top: 4px; }
+    .item-addons .addon { display: block; font-size: 11px; color: #666; line-height: 1.5; }
+    .item-addons .addon strong { color: #444; }
     .pickup-badge { display: inline-block; background: #f0ad4e; color: #fff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 3px; text-transform: uppercase; }
     @media print {
         body { padding: 0; }
@@ -1399,7 +1417,16 @@ class ES_Fulfillment_Admin {
         <?php foreach ( $line_items as $li ) : ?>
         <tr>
             <td><?php echo esc_html( $li['sku'] ); ?></td>
-            <td><?php echo esc_html( $li['name'] ); ?></td>
+            <td>
+                <?php echo esc_html( $li['name'] ); ?>
+                <?php if ( ! empty( $li['addons'] ) ) : ?>
+                    <div class="item-addons">
+                        <?php foreach ( $li['addons'] as $addon ) : ?>
+                            <span class="addon"><strong><?php echo esc_html( $addon['key'] ); ?>:</strong> <?php echo esc_html( $addon['value'] ); ?></span>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </td>
             <td class="qty"><?php echo esc_html( $li['qty'] ); ?></td>
             <td class="weight"><?php echo $li['weight'] > 0 ? esc_html( number_format( $li['weight'], 2 ) . ' kg' ) : '&ndash;'; ?></td>
         </tr>

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.10.5] - 2026-03-26
+
+### Added
+- **Product addon fields on packing slip** — custom product options (e.g. "Milled - Standard Crush", "Mix grains: No") now display below each line item. Only shows when addons exist.
+
 ## [1.10.4] - 2026-03-25
 
 ### Fixed
