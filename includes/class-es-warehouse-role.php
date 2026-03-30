@@ -117,9 +117,20 @@ class ES_Warehouse_Role {
      */
     public static function login_redirect( $redirect_to, $requested, $user ) {
         if ( ! is_wp_error( $user ) && in_array( self::ROLE_SLUG, $user->roles, true ) ) {
-            return admin_url( 'admin.php?page=wc-orders' );
+            return admin_url( self::get_orders_url() );
         }
         return $redirect_to;
+    }
+
+    /**
+     * Get the correct orders list URL based on HPOS status.
+     */
+    private static function get_orders_url() {
+        if ( class_exists( 'Automattic\WooCommerce\Utilities\OrderUtil' )
+            && \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled() ) {
+            return 'admin.php?page=wc-orders';
+        }
+        return 'edit.php?post_type=shop_order';
     }
 
     /**
@@ -167,7 +178,7 @@ class ES_Warehouse_Role {
         }
 
         // Block everything else — redirect to orders.
-        wp_safe_redirect( admin_url( 'admin.php?page=wc-orders' ) );
+        wp_safe_redirect( admin_url( self::get_orders_url() ) );
         exit;
     }
 
