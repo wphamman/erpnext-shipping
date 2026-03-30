@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.11.0] - 2026-03-29
+
+### Added
+- **Order Assignment**: assign orders to staff members from the order detail page. "Assigned to" dropdown with all admin/shop manager/warehouse staff users. Email notification sent to assignee with order details and customer note. "Assigned to" column on order list. Filter by assignee dropdown.
+- **Warehouse Staff role**: custom WordPress role for warehouse/fulfillment staff. Can view orders, print packing slips, and use fulfillment action buttons. Cannot edit products, settings, coupons, plugins, or manage users. Admin menu restricted to WooCommerce Orders only. Redirected to orders page on login. Admin bar hidden on frontend.
+
 ## [1.10.5] - 2026-03-26
 
 ### Added

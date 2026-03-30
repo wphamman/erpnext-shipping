@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.10.5
+ * Version: 1.11.0
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Text Domain: erpnext-shipping
@@ -12,7 +12,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.10.5' );
+define( 'ES_SHIPPING_VERSION', '1.11.0' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // Add custom 15-minute cron interval (registered early so activation hook can use it).
@@ -76,6 +76,9 @@ function es_fulfillment_init() {
         require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-cron.php';
         require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-checkout.php';
         require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-watchdog.php';
+        require_once ES_SHIPPING_PATH . 'includes/class-es-order-assignment.php';
+        require_once ES_SHIPPING_PATH . 'includes/class-es-warehouse-role.php';
+        ES_Warehouse_Role::init();
     }
 }
 
@@ -374,6 +377,12 @@ function es_shipping_activate() {
         }
         update_option( 'wc_plugin_advanced_shipment_tracking', 'yes' );
     }
+
+    // Register warehouse staff role.
+    if ( ! class_exists( 'ES_Warehouse_Role' ) ) {
+        require_once ES_SHIPPING_PATH . 'includes/class-es-warehouse-role.php';
+    }
+    ES_Warehouse_Role::register_role();
 }
 register_activation_hook( __FILE__, 'es_shipping_activate' );
 
