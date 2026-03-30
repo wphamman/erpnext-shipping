@@ -142,11 +142,26 @@ class ES_Warehouse_Role {
             return;
         }
 
-        // Allow admin.php only for order-related pages.
+        // Allow admin.php for order-related pages (HPOS).
         if ( 'admin.php' === $pagenow ) {
             $page = sanitize_text_field( $_GET['page'] ?? '' );
-            $allowed_pages = array( 'wc-orders' );
-            if ( in_array( $page, $allowed_pages, true ) ) {
+            if ( 'wc-orders' === $page ) {
+                return;
+            }
+        }
+
+        // Allow legacy order screens (non-HPOS).
+        if ( 'edit.php' === $pagenow ) {
+            $post_type = sanitize_text_field( $_GET['post_type'] ?? '' );
+            if ( 'shop_order' === $post_type ) {
+                return;
+            }
+        }
+
+        // Allow individual order edit (legacy).
+        if ( 'post.php' === $pagenow ) {
+            $post_id = intval( $_GET['post'] ?? 0 );
+            if ( $post_id && 'shop_order' === get_post_type( $post_id ) ) {
                 return;
             }
         }

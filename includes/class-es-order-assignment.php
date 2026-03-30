@@ -142,7 +142,7 @@ class ES_Order_Assignment {
         $order_id = intval( $_POST['order_id'] ?? 0 );
         check_ajax_referer( 'es_assign_' . $order_id );
 
-        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+        if ( ! ES_Warehouse_Role::current_user_can_fulfill() ) {
             wp_send_json_error( 'Permission denied.' );
         }
 
