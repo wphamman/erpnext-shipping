@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.11.0
+ * Version: 1.11.1
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Text Domain: erpnext-shipping
@@ -12,7 +12,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.11.0' );
+define( 'ES_SHIPPING_VERSION', '1.11.1' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // Add custom 15-minute cron interval (registered early so activation hook can use it).
@@ -77,9 +77,11 @@ function es_fulfillment_init() {
         require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-checkout.php';
         require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-watchdog.php';
         require_once ES_SHIPPING_PATH . 'includes/class-es-order-assignment.php';
-        require_once ES_SHIPPING_PATH . 'includes/class-es-warehouse-role.php';
-        ES_Warehouse_Role::init();
     }
+
+    // Warehouse role restrictions run in both modes (role has caps regardless of mode).
+    require_once ES_SHIPPING_PATH . 'includes/class-es-warehouse-role.php';
+    ES_Warehouse_Role::init();
 }
 
 /**

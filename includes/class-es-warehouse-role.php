@@ -53,13 +53,18 @@ class ES_Warehouse_Role {
         $role->add_cap( 'edit_others_shop_orders' );
         $role->add_cap( 'read_private_shop_orders' );
 
-        // WooCommerce admin access.
-        $role->add_cap( 'view_woocommerce_reports' );
+        // Custom capability for our fulfillment AJAX actions (packing slips,
+        // status buttons, assignment). Does NOT grant manage_woocommerce,
+        // which would expose settings, coupons, products, and API credentials.
+        $role->add_cap( 'es_fulfillment_actions' );
+    }
 
-        // Our fulfillment AJAX actions check manage_woocommerce.
-        // We grant it so they can use packing slips, status buttons, etc.
-        // But we restrict the admin menu to only show Orders.
-        $role->add_cap( 'manage_woocommerce' );
+    /**
+     * Check if current user can perform fulfillment actions.
+     * Accepts both manage_woocommerce (admin/shop manager) and es_fulfillment_actions (warehouse staff).
+     */
+    public static function current_user_can_fulfill() {
+        return current_user_can( 'manage_woocommerce' ) || current_user_can( 'es_fulfillment_actions' );
     }
 
     /**
@@ -127,13 +132,26 @@ class ES_Warehouse_Role {
 
         global $pagenow;
 
-        // Allow AJAX, order pages, and our plugin pages.
-        $allowed = array( 'admin-ajax.php', 'admin.php', 'post.php', 'edit.php', 'profile.php' );
-        if ( in_array( $pagenow, $allowed, true ) ) {
+        // Always allow AJAX.
+        if ( 'admin-ajax.php' === $pagenow ) {
             return;
         }
 
-        // Redirect to orders.
+        // Allow profile page.
+        if ( 'profile.php' === $pagenow ) {
+            return;
+        }
+
+        // Allow admin.php only for order-related pages.
+        if ( 'admin.php' === $pagenow ) {
+            $page = sanitize_text_field( $_GET['page'] ?? '' );
+            $allowed_pages = array( 'wc-orders' );
+            if ( in_array( $page, $allowed_pages, true ) ) {
+                return;
+            }
+        }
+
+        // Block everything else — redirect to orders.
         wp_safe_redirect( admin_url( 'admin.php?page=wc-orders' ) );
         exit;
     }

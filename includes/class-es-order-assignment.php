@@ -156,10 +156,15 @@ class ES_Order_Assignment {
         $changed     = $user_id !== $prev_id;
 
         if ( $user_id > 0 ) {
-            // Validate user exists and is assignable.
+            // Validate user exists and is in the assignable set (admin/shop_manager/warehouse_staff).
             $user = get_userdata( $user_id );
             if ( ! $user ) {
                 wp_send_json_error( 'User not found.' );
+                return;
+            }
+            $allowed_roles = array( 'administrator', 'shop_manager', 'warehouse_staff' );
+            if ( empty( array_intersect( $allowed_roles, $user->roles ) ) ) {
+                wp_send_json_error( 'User cannot be assigned orders.' );
                 return;
             }
             $order->update_meta_data( self::META_KEY, $user_id );

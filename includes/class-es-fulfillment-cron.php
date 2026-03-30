@@ -145,9 +145,10 @@ class ES_Fulfillment_Cron {
 
                 $result = null;
 
-                if ( 'the-courier-guy' === $provider && ! empty( $tcg_token ) ) {
+                // Match provider slugs including legacy aliases from AST Pro.
+                if ( in_array( $provider, array( 'the-courier-guy', 'the-courier-guy-sa' ), true ) && ! empty( $tcg_token ) ) {
                     $result = self::poll_tcg( $tcg_token, $number, $logger, $ctx );
-                } elseif ( 'mds-collivery' === $provider && ! empty( $mds_token ) ) {
+                } elseif ( in_array( $provider, array( 'mds-collivery', 'collivery' ), true ) && ! empty( $mds_token ) ) {
                     $result = self::poll_mds( $mds_token, $number, $logger, $ctx );
                 }
 

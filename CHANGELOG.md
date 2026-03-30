@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.11.1] - 2026-03-29
+
+### Fixed
+- **High: Warehouse role over-privileged.** Removed `manage_woocommerce` capability from warehouse staff. Uses custom `es_fulfillment_actions` capability instead. Packing slip and status update handlers accept either capability. Warehouse staff restricted to orders page only (not all admin.php pages). Role restrictions now run in both migration and active mode.
+- **Medium: Legacy provider aliases not polled by cron.** Orders with `collivery` or `the-courier-guy-sa` tracking entries (from AST Pro migration) now correctly trigger courier API polling.
+- **Medium: Assignment accepts any user ID.** AJAX handler now validates assignee against allowed roles (administrator, shop_manager, warehouse_staff). Crafted requests with subscriber/customer IDs are rejected.
+
 ## [1.11.0] - 2026-03-29
 
 ### Added

@@ -330,7 +330,7 @@ class ES_Fulfillment_Admin {
 
         check_admin_referer( 'es_status_' . $order_id );
 
-        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+        if ( ! ES_Warehouse_Role::current_user_can_fulfill() ) {
             wp_die( 'Permission denied.' );
         }
 
@@ -1261,7 +1261,7 @@ class ES_Fulfillment_Admin {
         $order_id = intval( $_GET['order_id'] ?? 0 );
         check_admin_referer( 'es_packing_' . $order_id );
 
-        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+        if ( ! ES_Warehouse_Role::current_user_can_fulfill() ) {
             wp_die( 'Permission denied.' );
         }
 
