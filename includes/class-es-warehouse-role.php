@@ -53,9 +53,12 @@ class ES_Warehouse_Role {
         $role->add_cap( 'edit_others_shop_orders' );
         $role->add_cap( 'read_private_shop_orders' );
 
-        // Custom capability for our fulfillment AJAX actions (packing slips,
-        // status buttons, assignment). Does NOT grant manage_woocommerce,
-        // which would expose settings, coupons, products, and API credentials.
+        // WooCommerce requires manage_woocommerce for admin panel access
+        // and menu registration. We grant it here, then strip menu items
+        // and block page access via restrict_admin_menu() and restrict_admin_pages().
+        $role->add_cap( 'manage_woocommerce' );
+
+        // Custom capability for our fulfillment AJAX actions.
         $role->add_cap( 'es_fulfillment_actions' );
     }
 
@@ -100,6 +103,7 @@ class ES_Warehouse_Role {
             'wc-settings',           // Settings
             'wc-status',             // Status
             'wc-addons',             // Extensions
+            'es-shipping',           // Our plugin settings
             'edit.php?post_type=shop_coupon', // Coupons (legacy)
             'edit.php?post_type=product',     // Products
         );
@@ -153,12 +157,16 @@ class ES_Warehouse_Role {
             return;
         }
 
-        // Allow admin.php for order-related pages (HPOS).
+        // Allow admin.php for order-related pages (HPOS) only.
         if ( 'admin.php' === $pagenow ) {
             $page = sanitize_text_field( $_GET['page'] ?? '' );
-            if ( 'wc-orders' === $page ) {
+            $allowed_pages = array( 'wc-orders' );
+            if ( in_array( $page, $allowed_pages, true ) ) {
                 return;
             }
+            // Explicitly block settings pages even though they have manage_woocommerce.
+            wp_safe_redirect( admin_url( self::get_orders_url() ) );
+            exit;
         }
 
         // Allow legacy order screens (non-HPOS).
