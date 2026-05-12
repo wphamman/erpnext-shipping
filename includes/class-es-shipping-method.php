@@ -76,7 +76,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'title' => __( 'Stock Sync', 'erpnext-shipping' ),
                 'type'  => 'sync_button',
             ),
-            // ── The Courier Guy (via Ship Logic) ──
+            // ── The Courier Guy ──
             'tcg_heading' => array(
                 'title' => __( 'The Courier Guy', 'erpnext-shipping' ),
                 'type'  => 'title',
@@ -88,9 +88,9 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'default' => 'yes',
             ),
             'tcg_api_token' => array(
-                'title'       => __( 'Ship Logic API Token', 'erpnext-shipping' ),
+                'title'       => __( 'The Courier Guy API Token', 'erpnext-shipping' ),
                 'type'        => 'password',
-                'description' => __( 'The Courier Guy rates are fetched via the Ship Logic platform. Get your API token at shiplogic.com.', 'erpnext-shipping' ),
+                'description' => __( 'Get your API token from your Courier Guy portal at portal.thecourierguy.co.za.', 'erpnext-shipping' ),
             ),
 
             // ── MDS Collivery ──

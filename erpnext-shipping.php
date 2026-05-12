@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.11.4
+ * Version: 1.11.5
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Text Domain: erpnext-shipping
@@ -12,7 +12,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.11.4' );
+define( 'ES_SHIPPING_VERSION', '1.11.5' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // Add custom 15-minute cron interval (registered early so activation hook can use it).

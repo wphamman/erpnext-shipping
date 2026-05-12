@@ -5,7 +5,7 @@ Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routin
 ## Features
 
 ### Shipping Rates
-- **Multi-carrier rates** — queries The Courier Guy (Ship Logic) and MDS Collivery APIs in real time
+- **Multi-carrier rates** — queries The Courier Guy and MDS Collivery APIs in real time
 - **ERPNext stock routing** — automatically determines which warehouse(s) to ship from based on live inventory
 - **N-location support** — configure unlimited dispatch locations via the admin UI
 - **Smart fulfillment** — single-location, cheapest-location, or split-shipment routing
@@ -82,8 +82,8 @@ Stock is synced automatically every 15 minutes via WP Cron. The sync pulls all B
 
 ### 3. Carrier APIs
 
-**The Courier Guy (Ship Logic)**:
-- Enable the carrier and enter your Ship Logic Bearer token from [shiplogic.com](https://www.shiplogic.com)
+**The Courier Guy**:
+- Enable the carrier and enter your Bearer token from your Courier Guy portal at [portal.thecourierguy.co.za](https://portal.thecourierguy.co.za)
 
 **MDS Collivery**:
 - Enable the carrier and enter your API token from [collivery.co.za](https://collivery.co.za)
@@ -179,7 +179,7 @@ erpnext-shipping/
 │   ├── class-es-parcel-estimator.php       # Cart → parcel dimensions/weight
 │   ├── class-es-rate-cache.php             # Transient-based rate caching
 │   ├── class-es-carrier-base.php           # Abstract carrier interface
-│   ├── class-es-carrier-shiplogic.php      # The Courier Guy (Ship Logic API)
+│   ├── class-es-carrier-shiplogic.php      # The Courier Guy API
 │   ├── class-es-carrier-collivery.php      # MDS Collivery (API v3)
 │   ├── class-es-fulfillment-statuses.php   # Custom order statuses + pickup resolver
 │   ├── class-es-fulfillment-tracking.php   # Tracking meta + AST-compatible REST API

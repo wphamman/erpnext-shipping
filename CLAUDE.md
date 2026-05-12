@@ -88,7 +88,7 @@ erpnext-shipping/
 │   ├── class-es-parcel-estimator.php       # Cart → parcel dimensions/weight
 │   ├── class-es-rate-cache.php             # Transient-based rate caching
 │   ├── class-es-carrier-base.php           # Abstract carrier interface
-│   ├── class-es-carrier-shiplogic.php      # The Courier Guy (Ship Logic API)
+│   ├── class-es-carrier-shiplogic.php      # The Courier Guy API
 │   ├── class-es-carrier-collivery.php      # MDS Collivery (API v3)
 │   ├── class-es-fulfillment-statuses.php   # Custom order statuses + pickup resolver
 │   ├── class-es-fulfillment-tracking.php   # Tracking meta + AST-compatible REST API

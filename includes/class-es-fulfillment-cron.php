@@ -19,7 +19,7 @@ class ES_Fulfillment_Cron {
     );
 
     /**
-     * TCG ShipLogic status → WC status mapping.
+     * TCG Courier Guy status → WC status mapping.
      */
     private static $tcg_map = array(
         'created'          => null,  // No change
@@ -208,10 +208,10 @@ class ES_Fulfillment_Cron {
     }
 
     /**
-     * Poll TCG ShipLogic API for tracking status.
+     * Poll TCG Courier Guy API for tracking status.
      */
     private static function poll_tcg( $token, $tracking_ref, $logger, $ctx ) {
-        $url = 'https://api.shiplogic.com/v2/tracking/shipments?tracking_reference=' . urlencode( $tracking_ref );
+        $url = 'https://api.portal.thecourierguy.co.za/v2/tracking/shipments?tracking_reference=' . urlencode( $tracking_ref );
 
         $response = wp_remote_get( $url, array(
             'timeout' => 10,

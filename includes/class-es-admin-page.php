@@ -362,8 +362,8 @@ class ES_Admin_Page {
                         <th><label for="tcg_enabled"><?php esc_html_e( 'Enable', 'erpnext-shipping' ); ?></label></th>
                         <td><label><input type="checkbox" name="tcg_enabled" id="tcg_enabled" value="1" <?php checked( $v( 'tcg_enabled', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Enable The Courier Guy rates', 'erpnext-shipping' ); ?></label></td>
                     </tr>
-                    <?php $this->render_password_row( 'tcg_api_token', __( 'Ship Logic API Token', 'erpnext-shipping' ), $v( 'tcg_api_token' ) ); ?>
-                    <tr><th></th><td><p class="description"><?php esc_html_e( 'The Courier Guy rates are fetched via the Ship Logic platform. Get your API token at shiplogic.com.', 'erpnext-shipping' ); ?></p></td></tr>
+                    <?php $this->render_password_row( 'tcg_api_token', __( 'The Courier Guy API Token', 'erpnext-shipping' ), $v( 'tcg_api_token' ) ); ?>
+                    <tr><th></th><td><p class="description"><?php esc_html_e( 'Get your API token from your Courier Guy portal at portal.thecourierguy.co.za.', 'erpnext-shipping' ); ?></p></td></tr>
                 </table>
 
                 <h2><?php esc_html_e( 'MDS Collivery', 'erpnext-shipping' ); ?></h2>

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.11.5] - 2026-05-12
+
+### Changed
+- **Courier Guy API base URL**: updated from `api.shiplogic.com` to `api.portal.thecourierguy.co.za` per carrier deprecation notice (old URL sunsets 2026-05-20). Affects rate quotes and tracking poll endpoints.
+- **Rebranded "Ship Logic" → "The Courier Guy"** in all user-facing strings (admin settings labels, descriptions) and code comments. Internal class names retained for compatibility. Option keys (`tcg_*`) unchanged.
+
 ## [1.11.1] - 2026-03-29
 
 ### Fixed

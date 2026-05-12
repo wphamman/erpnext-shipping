@@ -3,12 +3,12 @@ defined( 'ABSPATH' ) || exit;
 
 class ES_Carrier_ShipLogic extends ES_Carrier_Base {
 
-    const API_URL = 'https://api.shiplogic.com/rates';
+    const API_URL = 'https://api.portal.thecourierguy.co.za/rates';
 
     private $api_token;
     private $company_name;
 
-    // Actual Ship Logic service codes → tiers (confirmed from live API).
+    // Actual Courier Guy service codes → tiers (confirmed from live API).
     private static $tier_map = array(
         'ECO' => 'economy',   // Economy (3-4 days)
         'OVN' => 'standard',  // Overnight (1-2 days)
