@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.11.7] - 2026-05-15
+
+### Changed
+- `normalize_provider()` now treats `-`, `_`, and whitespace as equivalent separators when matching display names and aliases. Defensive coverage for input variants like `courier_guy`, `the_courier_guy`, `mds_collivery` that fall outside the canonical slug + explicit alias list. The fast-path exact-slug check is unchanged, so canonical values still self-match without going through the fuzzy comparison.
+
 ## [1.11.6] - 2026-05-15
 
 ### Fixed

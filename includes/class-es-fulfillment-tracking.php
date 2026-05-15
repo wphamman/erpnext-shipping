@@ -40,16 +40,23 @@ class ES_Fulfillment_Tracking {
         if ( '' === $needle ) {
             return '';
         }
+        // Fast path: exact canonical slug.
         if ( isset( self::$providers[ $needle ] ) ) {
             return $needle;
         }
+        // Fuzzier match: treat `-`, `_`, and whitespace as equivalent separators so
+        // `the_courier_guy`, `Courier Guy`, and `courier-guy` all resolve.
+        $needle_fuzzy = preg_replace( '/[_\-\s]+/', ' ', $needle );
         foreach ( self::$providers as $slug => $data ) {
-            if ( strtolower( $data['name'] ) === $needle ) {
-                return $slug;
-            }
-            $aliases = array_map( 'strtolower', $data['aliases'] ?? array() );
-            if ( in_array( $needle, $aliases, true ) ) {
-                return $slug;
+            $candidates = array_merge(
+                array( $slug, $data['name'] ),
+                $data['aliases'] ?? array()
+            );
+            foreach ( $candidates as $candidate ) {
+                $cand_fuzzy = preg_replace( '/[_\-\s]+/', ' ', strtolower( (string) $candidate ) );
+                if ( $cand_fuzzy === $needle_fuzzy ) {
+                    return $slug;
+                }
             }
         }
         return sanitize_text_field( (string) $value );
