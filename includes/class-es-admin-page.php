@@ -230,6 +230,11 @@ class ES_Admin_Page {
      * Render the admin page.
      */
     public function render_page() {
+        // Diagnostics tab is a sub-page; dispatch to the diagnostics class.
+        if ( isset( $_GET['tab'] ) && 'diagnostics' === $_GET['tab'] && class_exists( 'ES_Diagnostics_Page' ) ) {
+            ES_Diagnostics_Page::render();
+            return;
+        }
         if ( ! $this->option_key ) {
             echo '<div class="wrap"><h1>' . esc_html__( 'ERPNext Shipping', 'erpnext-shipping' ) . '</h1>';
             echo '<div class="notice notice-error"><p>';
@@ -253,6 +258,11 @@ class ES_Admin_Page {
         ?>
         <div class="wrap">
             <h1><?php esc_html_e( 'ERPNext Shipping', 'erpnext-shipping' ); ?></h1>
+
+            <h2 class="nav-tab-wrapper">
+                <a href="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SLUG ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Settings', 'erpnext-shipping' ); ?></a>
+                <a href="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SLUG . '&tab=diagnostics' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Diagnostics', 'erpnext-shipping' ); ?></a>
+            </h2>
 
             <?php if ( count( $this->all_instances ?? array() ) > 1 ) : ?>
                 <p style="margin-bottom:10px;">

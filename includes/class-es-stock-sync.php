@@ -9,12 +9,14 @@ class ES_Stock_Sync {
 
     private $erp_url;
     private $erp_key;
-    private $erp_secret;
+    /** @var ES_ERPNext_Client */
+    private $client;
 
     public function __construct( $settings ) {
-        $this->erp_url    = rtrim( $settings['url'] ?? '', '/' );
-        $this->erp_key    = $settings['api_key'] ?? '';
-        $this->erp_secret = $settings['api_secret'] ?? '';
+        $this->erp_url = rtrim( $settings['url'] ?? '', '/' );
+        $this->erp_key = $settings['api_key'] ?? '';
+        // Stock sync uses a longer timeout than the default client (Bin endpoint can be slow on large catalogues).
+        $this->client  = new ES_ERPNext_Client( $settings, 30 );
     }
 
     /**
@@ -75,35 +77,17 @@ class ES_Stock_Sync {
 
         $location_ids = array_unique( array_values( $warehouse_map ) );
 
-        $filters = wp_json_encode( array(
-            array( 'warehouse', 'in', $warehouses ),
-            array( 'actual_qty', '>', 0 ),
-        ) );
-        $fields = wp_json_encode( array( 'item_code', 'warehouse', 'actual_qty' ) );
-
-        $url = $this->erp_url . '/api/resource/Bin?'
-            . 'fields=' . urlencode( $fields )
-            . '&filters=' . urlencode( $filters )
-            . '&limit_page_length=0';
-
-        $response = wp_remote_get( $url, array(
-            'headers' => array(
-                'Authorization' => 'token ' . $this->erp_key . ':' . $this->erp_secret,
-            ),
-            'timeout' => 30,
+        $body = $this->client->get( '/api/resource/Bin', array(
+            'fields'             => wp_json_encode( array( 'item_code', 'warehouse', 'actual_qty' ) ),
+            'filters'            => wp_json_encode( array(
+                array( 'warehouse', 'in', $warehouses ),
+                array( 'actual_qty', '>', 0 ),
+            ) ),
+            'limit_page_length'  => 0,
         ) );
 
-        if ( is_wp_error( $response ) ) {
-            $this->last_error = 'HTTP error: ' . $response->get_error_message();
-            return false;
-        }
-
-        $code = wp_remote_retrieve_response_code( $response );
-        $body = json_decode( wp_remote_retrieve_body( $response ), true );
-
-        if ( $code >= 400 ) {
-            $msg = $body['message'] ?? $body['exc'] ?? wp_remote_retrieve_body( $response );
-            $this->last_error = 'ERPNext returned HTTP ' . $code . ': ' . substr( $msg, 0, 200 );
+        if ( is_wp_error( $body ) ) {
+            $this->last_error = $body->get_error_message();
             return false;
         }
 

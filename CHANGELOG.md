@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.0] - 2026-05-15
+
+### Added
+- **"Open in ERPNext" button** on the order edit screen. Renders inside a new "ERPNext" meta box (HPOS + legacy CPT). URL pattern: `{erp_url}/app/sales-order/WEB1-{padded order id}`. Only shown when ERPNext URL is configured.
+- **"Re-poll Courier" action.** Triggers an immediate cron-poll-equivalent for one order via AJAX. Available on the order edit screen (meta-box button) and as a bulk action on the order list (cap: 25 orders/submit, 200ms sleep between polls to stay below carrier API rate ceilings).
+- **"Force ERPNext Sync" action.** Calls fusion's `run_sales_order_sync` RPC for one order. Per-order transient lock (30s TTL) prevents concurrent duplicate sync attempts.
+- **ERP Sync indicator column** on the WooCommerce order list (HPOS + legacy CPT). Shows ✓ Synced / ⚠ Drift / ✗ Missing / — Unknown per order. Batched ERPNext API call per page render, results cached per-order in 5-min transients. Falls back silently if ERPNext is unreachable.
+- **Diagnostics tab** (`?page=es-shipping&tab=diagnostics`). Five panels:
+  - **Connectivity**: ERPNext + carrier last-success timestamps, "Test" button
+  - **Recent Rate Quotes**: last 20 quotes with latency and result
+  - **Courier Polling**: last cycle summary (orders processed, errors, per-provider success/failure counts) + "Run poll now" button
+  - **Recent ERPNext Sync Errors**: last 20 fusion-related entries from ERPNext Error Log, each linking to the full entry
+  - **Cache & Maintenance**: clear rate-quote log, flush sync-state transients, force stock sync
+- `ES_ERPNext_Client` helper class — shared HTTP wrapper around the ERPNext REST API, reads creds from existing `erp_url`/`erp_api_key`/`erp_api_secret` shipping-method options.
+- `ES_Quote_Log` — fixed-size circular buffer (50 entries) of carrier rate quotes for the Diagnostics tab.
+- Cron poll summary captured in `es_last_poll_summary` option at the end of every `ES_Fulfillment_Cron::poll()` run.
+- Cron mutex via `es_poll_lock` transient (60s TTL) — prevents the WP-cron run and the Diagnostics "Run poll now" button from colliding.
+
+### Changed
+- `ES_Stock_Sync` refactored to use the new shared `ES_ERPNext_Client`. Behaviour unchanged (same endpoint, same 30s timeout, same data shape).
+- `ES_Fulfillment_Cron::poll()` per-order body extracted into `poll_single_order()` so the manual Re-poll action and the cron path share one implementation.
+- Carrier classes (`ES_Carrier_ShipLogic`, `ES_Carrier_Collivery`) record each rate-quote attempt into `ES_Quote_Log` (timestamp, carrier slug, masked destination postcode, parcel count, response time, success/error).
+
 ## [1.11.7] - 2026-05-15
 
 ### Changed

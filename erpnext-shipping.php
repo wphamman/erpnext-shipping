@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.11.7
+ * Version: 1.12.0
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Text Domain: erpnext-shipping
@@ -12,7 +12,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.11.7' );
+define( 'ES_SHIPPING_VERSION', '1.12.0' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // Add custom 15-minute cron interval (registered early so activation hook can use it).
@@ -47,6 +47,8 @@ function es_shipping_init() {
 
     require_once ES_SHIPPING_PATH . 'includes/class-es-rate-cache.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-parcel-estimator.php';
+    require_once ES_SHIPPING_PATH . 'includes/class-es-erpnext-client.php';
+    require_once ES_SHIPPING_PATH . 'includes/class-es-quote-log.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-stock-sync.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-carrier-base.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-carrier-shiplogic.php';
@@ -77,6 +79,16 @@ function es_fulfillment_init() {
         require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-checkout.php';
         require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-watchdog.php';
         require_once ES_SHIPPING_PATH . 'includes/class-es-order-assignment.php';
+
+        // v1.12.0: cross-system admin UX + diagnostics. Depend on tracking + cron.
+        if ( is_admin() ) {
+            require_once ES_SHIPPING_PATH . 'includes/class-es-erpnext-client.php';
+            require_once ES_SHIPPING_PATH . 'includes/class-es-quote-log.php';
+            require_once ES_SHIPPING_PATH . 'includes/class-es-order-actions.php';
+            require_once ES_SHIPPING_PATH . 'includes/class-es-diagnostics-page.php';
+            ES_Order_Actions::init();
+            ES_Diagnostics_Page::init();
+        }
     }
 
     // Warehouse role restrictions run in both modes (role has caps regardless of mode).

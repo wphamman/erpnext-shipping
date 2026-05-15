@@ -78,6 +78,7 @@ class ES_Fulfillment_Admin {
                 $new_columns['es_customer_note'] = __( 'Customer Note', 'erpnext-shipping' );
                 $new_columns['es_tracking']      = __( 'Shipment Tracking', 'erpnext-shipping' );
                 $new_columns['es_status']        = __( 'Shipment Status', 'erpnext-shipping' );
+                $new_columns['es_erp_sync']      = __( 'ERP Sync', 'erpnext-shipping' );
             }
         }
         // Fallback if order_total wasn't found.
@@ -86,6 +87,7 @@ class ES_Fulfillment_Admin {
             $new_columns['es_customer_note'] = __( 'Customer Note', 'erpnext-shipping' );
             $new_columns['es_tracking']      = __( 'Shipment Tracking', 'erpnext-shipping' );
             $new_columns['es_status']        = __( 'Shipment Status', 'erpnext-shipping' );
+            $new_columns['es_erp_sync']      = __( 'ERP Sync', 'erpnext-shipping' );
         }
         return $new_columns;
     }
@@ -102,6 +104,8 @@ class ES_Fulfillment_Admin {
             self::render_tracking_column( $order );
         } elseif ( 'es_status' === $column_name ) {
             self::render_status_column( $order );
+        } elseif ( 'es_erp_sync' === $column_name ) {
+            self::render_erp_sync_column( $order );
         }
     }
 
@@ -109,7 +113,7 @@ class ES_Fulfillment_Admin {
      * Render column content — Legacy (receives column name and post ID).
      */
     public static function render_order_column_legacy( $column_name, $post_id ) {
-        if ( ! in_array( $column_name, array( 'es_ship_method', 'es_customer_note', 'es_tracking', 'es_status' ), true ) ) {
+        if ( ! in_array( $column_name, array( 'es_ship_method', 'es_customer_note', 'es_tracking', 'es_status', 'es_erp_sync' ), true ) ) {
             return;
         }
         $order = wc_get_order( $post_id );
@@ -123,9 +127,158 @@ class ES_Fulfillment_Admin {
             self::render_customer_note_column( $order );
         } elseif ( 'es_tracking' === $column_name ) {
             self::render_tracking_column( $order );
+        } elseif ( 'es_erp_sync' === $column_name ) {
+            self::render_erp_sync_column( $order );
         } else {
             self::render_status_column( $order );
         }
+    }
+
+    /**
+     * Render the ERP Sync indicator. Looks up the order's matching Sales Order in
+     * ERPNext (batched + cached per-page-render in a transient) and shows:
+     *   ✓ Synced   — SO exists and WC status maps cleanly to fusion's status map
+     *   ⚠ Drift    — SO exists but status diverges
+     *   ✗ Missing  — no SO with this woocommerce_id
+     *   — Unknown  — ERPNext unreachable / not configured
+     */
+    private static function render_erp_sync_column( $order ) {
+        $order_id = $order->get_id();
+        $cache_key = 'es_sync_state_' . $order_id;
+        $state = get_transient( $cache_key );
+        if ( false === $state ) {
+            // Prime cache for all visible orders if this is the first row.
+            $state = self::resolve_sync_state_for_visible_orders( $order_id );
+        }
+        if ( ! is_array( $state ) ) {
+            echo '<span title="ERPNext not reachable">—</span>';
+            return;
+        }
+        $marker = $state['marker'] ?? '—';
+        $title  = $state['title']  ?? '';
+        echo '<span title="' . esc_attr( $title ) . '" style="font-size:16px;">' . esc_html( $marker ) . '</span>';
+    }
+
+    /**
+     * Batched lookup: query ERPNext once for all visible orders' Sales Orders,
+     * stash each result in a per-order transient (5-min TTL), then return the
+     * one the caller asked for.
+     */
+    private static function resolve_sync_state_for_visible_orders( $current_order_id ) {
+        global $wp_query;
+        $ids = array();
+        if ( isset( $wp_query->posts ) && is_array( $wp_query->posts ) ) {
+            foreach ( $wp_query->posts as $p ) {
+                $ids[] = is_object( $p ) ? (int) $p->ID : (int) $p;
+            }
+        }
+        if ( empty( $ids ) ) {
+            $ids = array( $current_order_id );
+        }
+        // Cap batch to avoid huge queries.
+        $ids = array_slice( array_unique( array_map( 'intval', $ids ) ), 0, 100 );
+
+        // Only query orders not already cached.
+        $to_query = array();
+        foreach ( $ids as $id ) {
+            if ( false === get_transient( 'es_sync_state_' . $id ) ) {
+                $to_query[] = $id;
+            }
+        }
+
+        if ( empty( $to_query ) ) {
+            return get_transient( 'es_sync_state_' . $current_order_id );
+        }
+
+        $client = class_exists( 'ES_ERPNext_Client' ) ? ES_ERPNext_Client::from_settings( 5 ) : null;
+        if ( ! $client ) {
+            foreach ( $to_query as $id ) {
+                set_transient( 'es_sync_state_' . $id, array(
+                    'marker' => '—',
+                    'title'  => 'ERPNext not configured',
+                ), 5 * MINUTE_IN_SECONDS );
+            }
+            return get_transient( 'es_sync_state_' . $current_order_id );
+        }
+
+        $body = $client->get( '/api/resource/Sales Order', array(
+            'fields'            => wp_json_encode( array( 'name', 'woocommerce_id', 'woocommerce_status', 'modified' ) ),
+            'filters'           => wp_json_encode( array(
+                array( 'woocommerce_id', 'in', array_map( 'strval', $to_query ) ),
+            ) ),
+            'limit_page_length' => 0,
+        ) );
+
+        $found = array();
+        if ( ! is_wp_error( $body ) && isset( $body['data'] ) && is_array( $body['data'] ) ) {
+            foreach ( $body['data'] as $so ) {
+                $wid = intval( $so['woocommerce_id'] ?? 0 );
+                if ( $wid ) {
+                    $found[ $wid ] = $so;
+                }
+            }
+        }
+
+        foreach ( $to_query as $id ) {
+            if ( isset( $found[ $id ] ) ) {
+                $state = self::evaluate_sync_state( $id, $found[ $id ] );
+            } elseif ( is_wp_error( $body ) ) {
+                $state = array( 'marker' => '—', 'title' => 'ERPNext unreachable: ' . $body->get_error_message() );
+            } else {
+                $state = array( 'marker' => '✗', 'title' => 'No Sales Order found in ERPNext' );
+            }
+            set_transient( 'es_sync_state_' . $id, $state, 5 * MINUTE_IN_SECONDS );
+        }
+
+        return get_transient( 'es_sync_state_' . $current_order_id );
+    }
+
+    /**
+     * Decide whether the WC order and its Sales Order are in sync.
+     * Synced if both exist and WC status maps to the SO's woocommerce_status label
+     * (using the same hardcoded map fusion uses).
+     */
+    private static function evaluate_sync_state( $order_id, $so ) {
+        $order = wc_get_order( $order_id );
+        if ( ! $order ) {
+            return array( 'marker' => '—', 'title' => 'Order not found' );
+        }
+        $wc_status = $order->get_status();
+        $so_status_label = $so['woocommerce_status'] ?? '';
+
+        // Map WC status slugs → fusion's display labels (mirror of fusion's WC_ORDER_STATUS_MAPPING).
+        $map = array(
+            'pending'           => 'Pending Payment',
+            'on-hold'           => 'On hold',
+            'failed'            => 'Failed',
+            'cancelled'         => 'Cancelled',
+            'processing'        => 'Processing',
+            'refunded'          => 'Refunded',
+            'completed'         => 'Shipped',
+            'ready-pickup'      => 'Ready for Pickup',
+            'pickup'            => 'Picked up',
+            'delivered'         => 'Delivered',
+            'processing-lp'     => 'Processing LP',
+            'partially-shipped' => 'Partially Shipped',
+            'dispatched-pickup' => 'Dispatched Pickup',
+            'checkout-draft'    => 'Draft',
+        );
+        $expected = $map[ $wc_status ] ?? null;
+        if ( null !== $expected && $expected === $so_status_label ) {
+            return array(
+                'marker' => '✓',
+                'title'  => sprintf( 'Synced — %s (%s)', $so['name'] ?? '', $so_status_label ),
+            );
+        }
+        return array(
+            'marker' => '⚠',
+            'title'  => sprintf(
+                'Drift — WC: %s, ERP: %s (%s)',
+                $wc_status,
+                $so_status_label ?: '(none)',
+                $so['name'] ?? ''
+            ),
+        );
     }
 
     private static function render_ship_method_column( $order ) {

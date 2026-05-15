@@ -73,6 +73,7 @@ class ES_Carrier_ShipLogic extends ES_Carrier_Base {
             'parcels' => $sl_parcels,
         );
 
+        $start_ms = (int) ( microtime( true ) * 1000 );
         $response = wp_remote_post( self::API_URL, array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->api_token,
@@ -81,20 +82,26 @@ class ES_Carrier_ShipLogic extends ES_Carrier_Base {
             'body'    => wp_json_encode( $body ),
             'timeout' => 5,
         ) );
+        $duration_ms = (int) ( microtime( true ) * 1000 ) - $start_ms;
+        $dest_code   = $destination['code'] ?? '';
 
         if ( is_wp_error( $response ) ) {
+            ES_Quote_Log::record( 'the-courier-guy', $dest_code, count( $sl_parcels ), $duration_ms, false, $response->get_error_message() );
             return false;
         }
 
         $code = wp_remote_retrieve_response_code( $response );
         if ( $code < 200 || $code >= 300 ) {
+            ES_Quote_Log::record( 'the-courier-guy', $dest_code, count( $sl_parcels ), $duration_ms, false, 'HTTP ' . $code );
             return false;
         }
 
         $data = json_decode( wp_remote_retrieve_body( $response ), true );
         if ( ! is_array( $data ) || ! isset( $data['rates'] ) ) {
+            ES_Quote_Log::record( 'the-courier-guy', $dest_code, count( $sl_parcels ), $duration_ms, false, 'Unexpected response shape' );
             return false;
         }
+        ES_Quote_Log::record( 'the-courier-guy', $dest_code, count( $sl_parcels ), $duration_ms, true );
 
         $rates = array();
         foreach ( $data['rates'] as $r ) {
