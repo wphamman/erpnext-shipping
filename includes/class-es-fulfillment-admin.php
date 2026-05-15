@@ -436,11 +436,7 @@ class ES_Fulfillment_Admin {
             }
 
             if ( ! empty( $provider ) ) {
-                $vars['meta_query'][] = array(
-                    'key'     => '_wc_shipment_tracking_items',
-                    'value'   => $provider,
-                    'compare' => 'LIKE',
-                );
+                $vars['meta_query'][] = self::build_provider_meta_query( $provider );
             }
 
             if ( ! empty( $status ) ) {
@@ -463,6 +459,31 @@ class ES_Fulfillment_Admin {
     }
 
     /**
+     * Build a meta_query clause that matches the requested provider plus all of its
+     * known aliases / display names. Lets legacy stored values (e.g. `collivery`,
+     * `The Courier Guy`) still surface in the filtered list.
+     */
+    private static function build_provider_meta_query( $provider ) {
+        $terms = ES_Fulfillment_Tracking::get_provider_search_terms( $provider );
+        if ( count( $terms ) === 1 ) {
+            return array(
+                'key'     => '_wc_shipment_tracking_items',
+                'value'   => $terms[0],
+                'compare' => 'LIKE',
+            );
+        }
+        $clause = array( 'relation' => 'OR' );
+        foreach ( $terms as $t ) {
+            $clause[] = array(
+                'key'     => '_wc_shipment_tracking_items',
+                'value'   => $t,
+                'compare' => 'LIKE',
+            );
+        }
+        return $clause;
+    }
+
+    /**
      * Apply filter query modifications — HPOS.
      */
     public static function apply_filters_hpos( $args ) {
@@ -475,11 +496,7 @@ class ES_Fulfillment_Admin {
             }
 
             if ( ! empty( $provider ) ) {
-                $args['meta_query'][] = array(
-                    'key'     => '_wc_shipment_tracking_items',
-                    'value'   => $provider,
-                    'compare' => 'LIKE',
-                );
+                $args['meta_query'][] = self::build_provider_meta_query( $provider );
             }
 
             if ( ! empty( $status ) ) {

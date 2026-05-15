@@ -145,10 +145,12 @@ class ES_Fulfillment_Cron {
 
                 $result = null;
 
-                // Match provider slugs including legacy aliases from AST Pro.
-                if ( in_array( $provider, array( 'the-courier-guy', 'the-courier-guy-sa' ), true ) && ! empty( $tcg_token ) ) {
+                // Normalize provider value so legacy aliases, display names (e.g. from
+                // woocommerce_fusion's dropdown), and slugs all route correctly.
+                $canonical = ES_Fulfillment_Tracking::normalize_provider( $provider );
+                if ( 'the-courier-guy' === $canonical && ! empty( $tcg_token ) ) {
                     $result = self::poll_tcg( $tcg_token, $number, $logger, $ctx );
-                } elseif ( in_array( $provider, array( 'mds-collivery', 'collivery' ), true ) && ! empty( $mds_token ) ) {
+                } elseif ( 'mds-collivery' === $canonical && ! empty( $mds_token ) ) {
                     $result = self::poll_mds( $mds_token, $number, $logger, $ctx );
                 }
 

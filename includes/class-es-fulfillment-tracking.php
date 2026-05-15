@@ -10,27 +10,68 @@ class ES_Fulfillment_Tracking {
     const META_KEY = '_wc_shipment_tracking_items';
 
     /**
-     * Known provider slugs and their display names / tracking URLs.
+     * Canonical provider slugs with display names, tracking URLs, and aliases.
+     * Aliases cover legacy AST Pro slugs (e.g. `the-courier-guy-sa`, `collivery`)
+     * and the display names that woocommerce_fusion echoes back from its dropdown.
      */
     private static $providers = array(
         'the-courier-guy' => array(
-            'name' => 'The Courier Guy',
-            'url'  => 'https://www.thecourierguy.co.za/tracking?reference=%s',
+            'name'    => 'The Courier Guy',
+            'url'     => 'https://www.thecourierguy.co.za/tracking?reference=%s',
+            'aliases' => array( 'the-courier-guy-sa', 'tcg', 'courier guy', 'courierguy', 'courier-guy' ),
         ),
         'mds-collivery' => array(
-            'name' => 'MDS Collivery',
-            'url'  => 'https://www.collivery.co.za/tracking/%s',
-        ),
-        // Legacy aliases — AST Pro stored these slugs for existing orders.
-        'collivery' => array(
-            'name' => 'Collivery',
-            'url'  => 'https://www.collivery.co.za/tracking/%s',
-        ),
-        'the-courier-guy-sa' => array(
-            'name' => 'The Courier Guy',
-            'url'  => 'https://www.thecourierguy.co.za/tracking?reference=%s',
+            'name'    => 'MDS Collivery',
+            'url'     => 'https://www.collivery.co.za/tracking/%s',
+            'aliases' => array( 'collivery', 'mds', 'mds collivery' ),
         ),
     );
+
+    /**
+     * Map any plausible input (slug, display name, alias, legacy value, mixed case)
+     * to a canonical slug. Returns the original sanitized value if no match — never
+     * silently discards data. Used at every ingestion and lookup point.
+     */
+    public static function normalize_provider( $value ) {
+        if ( ! is_scalar( $value ) ) {
+            return '';
+        }
+        $needle = strtolower( trim( (string) $value ) );
+        if ( '' === $needle ) {
+            return '';
+        }
+        if ( isset( self::$providers[ $needle ] ) ) {
+            return $needle;
+        }
+        foreach ( self::$providers as $slug => $data ) {
+            if ( strtolower( $data['name'] ) === $needle ) {
+                return $slug;
+            }
+            $aliases = array_map( 'strtolower', $data['aliases'] ?? array() );
+            if ( in_array( $needle, $aliases, true ) ) {
+                return $slug;
+            }
+        }
+        return sanitize_text_field( (string) $value );
+    }
+
+    /**
+     * Return all string variants (slug + display name + aliases) that may appear
+     * in stored `_wc_shipment_tracking_items` JSON for a given canonical slug.
+     * Used by the admin order-list filter to OR-match legacy data.
+     */
+    public static function get_provider_search_terms( $slug ) {
+        $slug = self::normalize_provider( $slug );
+        if ( ! isset( self::$providers[ $slug ] ) ) {
+            return array( $slug );
+        }
+        $data  = self::$providers[ $slug ];
+        $terms = array_merge(
+            array( $slug, $data['name'] ),
+            $data['aliases'] ?? array()
+        );
+        return array_values( array_unique( array_filter( $terms ) ) );
+    }
 
     public static function init() {
         add_action( 'rest_api_init', array( __CLASS__, 'register_rest_routes' ) );
@@ -289,8 +330,10 @@ class ES_Fulfillment_Tracking {
         if ( ! $date_shipped ) {
             $date_shipped = time();
         }
+        // Single ingestion chokepoint — REST, admin AJAX, and any other caller
+        // all flow through here, so normalize once and store canonical slugs.
         return array(
-            'tracking_provider'    => $provider,
+            'tracking_provider'    => self::normalize_provider( $provider ),
             'tracking_number'      => $tracking_number,
             'tracking_id'          => md5( $tracking_number . '-' . $date_shipped ),
             'date_shipped'         => $date_shipped,
@@ -315,7 +358,8 @@ class ES_Fulfillment_Tracking {
         if ( ! empty( $item['custom_tracking_link'] ) ) {
             return $item['custom_tracking_link'];
         }
-        $provider = $item['tracking_provider'] ?? '';
+        // Normalize at read time so legacy stored values (display names, old slugs) still resolve.
+        $provider = self::normalize_provider( $item['tracking_provider'] ?? '' );
         if ( isset( self::$providers[ $provider ] ) ) {
             return sprintf( self::$providers[ $provider ]['url'], urlencode( $item['tracking_number'] ) );
         }
@@ -326,6 +370,7 @@ class ES_Fulfillment_Tracking {
      * Get provider display name.
      */
     public static function get_provider_name( $slug ) {
+        $slug = self::normalize_provider( $slug );
         return self::$providers[ $slug ]['name'] ?? $slug;
     }
 

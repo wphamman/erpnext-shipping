@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.11.6] - 2026-05-15
+
+### Fixed
+- **Tracking provider normalization.** Provider values stored from woocommerce_fusion (which echoes back display names like `"The Courier Guy"` rather than slugs) now route correctly through courier polling and tracking-URL lookup. Previously silent: any tracking added via Fusion's "Edit Shipment Trackings" dialog would store the display name verbatim, causing cron polling to skip the order and tracking links to render empty.
+- **Order-list provider filter** is now alias-aware. Legacy stored values (`collivery`, `the-courier-guy-sa`, mixed-case display names) appear in the filtered list when the corresponding provider is selected.
+
+### Changed
+- Single ingestion chokepoint: `ES_Fulfillment_Tracking::create_tracking_item()` normalizes the provider value once, so REST, admin AJAX, and any future caller all store canonical slugs.
+- `$providers` array restructured: legacy slugs (`collivery`, `the-courier-guy-sa`) moved from top-level keys to per-provider `aliases` lists. AST-Pro REST response format unchanged for third-party compatibility.
+
 ## [1.11.5] - 2026-05-12
 
 ### Changed
