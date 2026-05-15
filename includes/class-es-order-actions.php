@@ -39,9 +39,14 @@ class ES_Order_Actions {
         add_filter( 'handle_bulk_actions-woocommerce_page_wc-orders', array( __CLASS__, 'handle_bulk_repoll' ), 10, 3 );
         add_action( 'admin_notices', array( __CLASS__, 'bulk_action_admin_notice' ) );
 
-        // AJAX endpoints.
+        // AJAX endpoints (used by the meta-box buttons).
         add_action( 'wp_ajax_es_repoll_order', array( __CLASS__, 'ajax_repoll_order' ) );
         add_action( 'wp_ajax_es_force_sync', array( __CLASS__, 'ajax_force_sync' ) );
+
+        // admin-post.php endpoints (used by row actions, which can't carry POST nonces).
+        add_action( 'admin_post_es_repoll_row', array( __CLASS__, 'handle_row_repoll' ) );
+        add_action( 'admin_post_es_force_sync_row', array( __CLASS__, 'handle_row_force_sync' ) );
+        add_action( 'admin_notices', array( __CLASS__, 'row_action_admin_notice' ) );
 
         // Enqueue JS on order screens.
         add_action( 'admin_enqueue_scripts', array( __CLASS__, 'enqueue_assets' ) );
@@ -116,21 +121,161 @@ class ES_Order_Actions {
             return $actions;
         }
         $order_id = $order->get_id();
-        $nonce    = wp_create_nonce( 'es_order_actions_' . $order_id );
 
+        // Each action is a real admin-post.php URL with its own nonce, so the
+        // browser navigates server-side and we handle the action there.
         $actions['es_repoll'] = array(
-            'url'    => '#',
+            'url'    => wp_nonce_url(
+                add_query_arg(
+                    array( 'action' => 'es_repoll_row', 'order_id' => $order_id ),
+                    admin_url( 'admin-post.php' )
+                ),
+                'es_row_repoll_' . $order_id
+            ),
             'name'   => __( 'Re-poll Courier', 'erpnext-shipping' ),
             'action' => 'es-action-repoll-row',
         );
         $actions['es_force_sync'] = array(
-            'url'    => '#',
+            'url'    => wp_nonce_url(
+                add_query_arg(
+                    array( 'action' => 'es_force_sync_row', 'order_id' => $order_id ),
+                    admin_url( 'admin-post.php' )
+                ),
+                'es_row_force_sync_' . $order_id
+            ),
             'name'   => __( 'Force ERPNext Sync', 'erpnext-shipping' ),
             'action' => 'es-action-force-sync-row',
         );
-        // Smuggle the order id + nonce via class names rendered into the action element.
-        // The JS reads them from data-* attributes set in enqueue_assets via inline init.
         return $actions;
+    }
+
+    /**
+     * Where to send the user back to after a row-action invocation.
+     */
+    private static function row_action_redirect_target( $order_id ) {
+        $referer = wp_get_referer();
+        if ( ! $referer ) {
+            return admin_url( 'edit.php?post_type=shop_order' );
+        }
+        return $referer;
+    }
+
+    public static function handle_row_repoll() {
+        $order_id = intval( $_GET['order_id'] ?? 0 );
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( 'Permission denied.', '', array( 'response' => 403 ) );
+        }
+        check_admin_referer( 'es_row_repoll_' . $order_id );
+
+        $order = wc_get_order( $order_id );
+        if ( ! $order ) {
+            wp_die( 'Order not found.', '', array( 'response' => 404 ) );
+        }
+        $r = ES_Fulfillment_Cron::poll_single_order( $order );
+        $msg = ( null === $r )
+            ? sprintf( 'no-tracking-%d', $order_id )
+            : sprintf( 'repoll-done-%d-%d', $order_id, ! empty( $r['had_failure'] ) ? 1 : 0 );
+
+        wp_safe_redirect( add_query_arg( 'es_row_msg', $msg, self::row_action_redirect_target( $order_id ) ) );
+        exit;
+    }
+
+    public static function handle_row_force_sync() {
+        $order_id = intval( $_GET['order_id'] ?? 0 );
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( 'Permission denied.', '', array( 'response' => 403 ) );
+        }
+        check_admin_referer( 'es_row_force_sync_' . $order_id );
+
+        $lock_key = 'es_force_sync_lock_' . $order_id;
+        if ( get_transient( $lock_key ) ) {
+            wp_safe_redirect( add_query_arg( 'es_row_msg', 'force-busy-' . $order_id, self::row_action_redirect_target( $order_id ) ) );
+            exit;
+        }
+        set_transient( $lock_key, time(), self::FORCE_SYNC_LOCK_TTL );
+
+        $client = ES_ERPNext_Client::from_settings( 30 );
+        if ( ! $client ) {
+            delete_transient( $lock_key );
+            wp_safe_redirect( add_query_arg( 'es_row_msg', 'force-noerp-' . $order_id, self::row_action_redirect_target( $order_id ) ) );
+            exit;
+        }
+        $so_name = self::derive_so_name( $order_id );
+        $r = $client->post(
+            '/api/method/woocommerce_fusion.tasks.sync_sales_orders.run_sales_order_sync',
+            array( 'sales_order_name' => $so_name )
+        );
+        delete_transient( $lock_key );
+
+        $code = is_wp_error( $r ) ? 'force-fail' : 'force-ok';
+        wp_safe_redirect( add_query_arg( 'es_row_msg', $code . '-' . $order_id, self::row_action_redirect_target( $order_id ) ) );
+        exit;
+    }
+
+    public static function row_action_admin_notice() {
+        $msg = sanitize_text_field( $_GET['es_row_msg'] ?? '' );
+        if ( '' === $msg ) {
+            return;
+        }
+        // Message format: {prefix}-{order_id} or {prefix}-{order_id}-{flag}
+        // where {prefix} is one of: repoll-done, no-tracking, force-ok, force-fail, force-busy, force-noerp.
+        $known = array(
+            'repoll-done' => 'repoll',
+            'no-tracking' => 'noTracking',
+            'force-ok'    => 'forceOk',
+            'force-fail'  => 'forceFail',
+            'force-busy'  => 'forceBusy',
+            'force-noerp' => 'forceNoErp',
+        );
+        $matched_prefix = null;
+        foreach ( array_keys( $known ) as $p ) {
+            if ( 0 === strpos( $msg, $p . '-' ) ) {
+                $matched_prefix = $p;
+                break;
+            }
+        }
+        if ( ! $matched_prefix ) {
+            return;
+        }
+        $tail     = substr( $msg, strlen( $matched_prefix ) + 1 );
+        $tail_p   = explode( '-', $tail );
+        $order_id = intval( $tail_p[0] ?? 0 );
+        $flag     = intval( $tail_p[1] ?? 0 );
+
+        switch ( $matched_prefix ) {
+            case 'repoll-done':
+                $class = $flag ? 'notice-warning' : 'notice-success';
+                $text  = sprintf(
+                    /* translators: %d order id, %s suffix */
+                    __( 'Order #%1$d re-polled%2$s.', 'erpnext-shipping' ),
+                    $order_id,
+                    $flag ? __( ' (with API errors)', 'erpnext-shipping' ) : ''
+                );
+                break;
+            case 'no-tracking':
+                $class = 'notice-info';
+                $text  = sprintf( __( 'Order #%d has no tracking items to poll.', 'erpnext-shipping' ), $order_id );
+                break;
+            case 'force-ok':
+                $class = 'notice-success';
+                $text  = sprintf( __( 'ERPNext sync requested for order #%d.', 'erpnext-shipping' ), $order_id );
+                break;
+            case 'force-fail':
+                $class = 'notice-error';
+                $text  = sprintf( __( 'ERPNext sync failed for order #%d. Check Diagnostics tab for details.', 'erpnext-shipping' ), $order_id );
+                break;
+            case 'force-busy':
+                $class = 'notice-warning';
+                $text  = sprintf( __( 'A force-sync for order #%d is already in progress.', 'erpnext-shipping' ), $order_id );
+                break;
+            case 'force-noerp':
+                $class = 'notice-error';
+                $text  = __( 'ERPNext credentials are not configured.', 'erpnext-shipping' );
+                break;
+            default:
+                return;
+        }
+        echo '<div class="notice ' . esc_attr( $class ) . ' is-dismissible"><p>' . esc_html( $text ) . '</p></div>';
     }
 
     // ── Bulk action: Re-poll ───────────────────────────────────────────────

@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.1] - 2026-05-15
+
+### Fixed
+- **Cron lock leak on exception.** `ES_Fulfillment_Cron::poll()` now wraps its body in `try/finally`, so the `es_poll_lock` transient is released even if `wc_get_orders()` or a per-order poll throws. Previously, an unhandled exception would block the next cron cycle and the Diagnostics "Run now" button for 60s.
+- **Diagnostics "Force stock sync" was a no-op.** Was firing the wrong action name (`es_shipping_stock_sync_cron`); the registered hook is `es_shipping_stock_sync`. Now triggers correctly.
+- **Collivery quote log gap.** Town-resolution failures returned before `ES_Quote_Log::record()` was called, so the Diagnostics rate-quote panel hid those attempts. Now records the failure with the unresolved city names in the error column.
+- **Row actions did nothing useful.** "Re-poll Courier" and "Force ERPNext Sync" row actions on the order list previously redirected the user to the meta box without performing the action (because the row-action API can't carry POST nonces). Now they target a real `admin-post.php` endpoint with per-action nonces, perform the work server-side, and surface a result via admin notice on return.
+
 ## [1.12.0] - 2026-05-15
 
 ### Added

@@ -358,8 +358,8 @@ class ES_Diagnostics_Page {
             $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_es_sync_state_%' OR option_name LIKE '_transient_timeout_es_sync_state_%'" );
             wp_send_json_success( array( 'message' => 'Sync-state transients flushed.' ) );
         } elseif ( 'stock' === $which ) {
-            // Trigger the stock-sync hook synchronously.
-            do_action( 'es_shipping_stock_sync_cron' );
+            // Trigger the stock-sync cron hook synchronously (registered in erpnext-shipping.php).
+            do_action( 'es_shipping_stock_sync' );
             wp_send_json_success( array( 'message' => 'Stock sync triggered.' ) );
         }
         wp_send_json_error( array( 'message' => 'Unknown cache' ), 400 );

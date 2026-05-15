@@ -55,8 +55,8 @@ class ES_Fulfillment_Cron {
         }
         set_transient( self::LOCK_KEY, time(), 60 );
 
-        $logger = wc_get_logger();
-        $ctx    = array( 'source' => 'erpnext-shipping-fulfillment' );
+        $logger   = wc_get_logger();
+        $ctx      = array( 'source' => 'erpnext-shipping-fulfillment' );
         $start_ms = (int) ( microtime( true ) * 1000 );
         $summary  = array(
             'started_at'        => time(),
@@ -69,40 +69,20 @@ class ES_Fulfillment_Cron {
             'duration_ms'       => 0,
         );
 
-        // Get carrier credentials from WC instance settings.
-        $tokens    = self::resolve_tokens();
-        $tcg_token = $tokens['tcg'];
-        $mds_token = $tokens['mds'];
+        try {
+            // Get carrier credentials from WC instance settings.
+            $tokens    = self::resolve_tokens();
+            $tcg_token = $tokens['tcg'];
+            $mds_token = $tokens['mds'];
 
-        if ( empty( $tcg_token ) && empty( $mds_token ) ) {
-            $logger->warning( 'No carrier API tokens configured, skipping poll.', $ctx );
-            $summary['duration_ms'] = (int) ( microtime( true ) * 1000 ) - $start_ms;
-            update_option( self::SUMMARY_OPTION, $summary, false );
-            delete_transient( self::LOCK_KEY );
-            return;
-        }
+            if ( empty( $tcg_token ) && empty( $mds_token ) ) {
+                $logger->warning( 'No carrier API tokens configured, skipping poll.', $ctx );
+                return;
+            }
 
-        // Anti-starvation: fetch unpolled orders first, then oldest-polled.
-        // Two separate queries avoid meta_query + meta_key JOIN conflicts.
-        $unpolled = wc_get_orders( array(
-            'status'     => array( 'completed', 'partially-shipped' ),
-            'meta_query' => array(
-                array(
-                    'key'     => '_wc_shipment_tracking_items',
-                    'compare' => 'EXISTS',
-                ),
-                array(
-                    'key'     => '_es_last_polled',
-                    'compare' => 'NOT EXISTS',
-                ),
-            ),
-            'limit' => self::BATCH_SIZE,
-        ) );
-
-        $remaining = self::BATCH_SIZE - count( $unpolled );
-        $polled = array();
-        if ( $remaining > 0 ) {
-            $polled = wc_get_orders( array(
+            // Anti-starvation: fetch unpolled orders first, then oldest-polled.
+            // Two separate queries avoid meta_query + meta_key JOIN conflicts.
+            $unpolled = wc_get_orders( array(
                 'status'     => array( 'completed', 'partially-shipped' ),
                 'meta_query' => array(
                     array(
@@ -111,47 +91,65 @@ class ES_Fulfillment_Cron {
                     ),
                     array(
                         'key'     => '_es_last_polled',
-                        'compare' => 'EXISTS',
+                        'compare' => 'NOT EXISTS',
                     ),
                 ),
-                'orderby'  => 'meta_value_num',
-                'meta_key' => '_es_last_polled',
-                'order'    => 'ASC',
-                'limit'    => $remaining,
+                'limit' => self::BATCH_SIZE,
             ) );
-        }
 
-        $orders = array_merge( $unpolled, $polled );
+            $remaining = self::BATCH_SIZE - count( $unpolled );
+            $polled = array();
+            if ( $remaining > 0 ) {
+                $polled = wc_get_orders( array(
+                    'status'     => array( 'completed', 'partially-shipped' ),
+                    'meta_query' => array(
+                        array(
+                            'key'     => '_wc_shipment_tracking_items',
+                            'compare' => 'EXISTS',
+                        ),
+                        array(
+                            'key'     => '_es_last_polled',
+                            'compare' => 'EXISTS',
+                        ),
+                    ),
+                    'orderby'  => 'meta_value_num',
+                    'meta_key' => '_es_last_polled',
+                    'order'    => 'ASC',
+                    'limit'    => $remaining,
+                ) );
+            }
 
-        if ( empty( $orders ) ) {
+            $orders = array_merge( $unpolled, $polled );
+
+            if ( empty( $orders ) ) {
+                return;
+            }
+
+            foreach ( $orders as $order ) {
+                $r = self::poll_single_order( $order, $tcg_token, $mds_token, $logger, $ctx );
+                if ( null === $r ) {
+                    continue; // no tracking items
+                }
+                $summary['orders_processed']++;
+                if ( $r['had_failure'] ) {
+                    $summary['errors']++;
+                }
+                foreach ( $r['per_provider'] as $slug => $stats ) {
+                    if ( ! isset( $summary['per_provider'][ $slug ] ) ) {
+                        $summary['per_provider'][ $slug ] = array( 'polled' => 0, 'successes' => 0, 'failures' => 0 );
+                    }
+                    $summary['per_provider'][ $slug ]['polled']    += $stats['polled'];
+                    $summary['per_provider'][ $slug ]['successes'] += $stats['successes'];
+                    $summary['per_provider'][ $slug ]['failures']  += $stats['failures'];
+                }
+            }
+        } finally {
+            // Always: persist the summary and release the lock, even if a
+            // wc_get_orders call or a per-order poll throws.
             $summary['duration_ms'] = (int) ( microtime( true ) * 1000 ) - $start_ms;
             update_option( self::SUMMARY_OPTION, $summary, false );
             delete_transient( self::LOCK_KEY );
-            return;
         }
-
-        foreach ( $orders as $order ) {
-            $r = self::poll_single_order( $order, $tcg_token, $mds_token, $logger, $ctx );
-            if ( null === $r ) {
-                continue; // no tracking items
-            }
-            $summary['orders_processed']++;
-            if ( $r['had_failure'] ) {
-                $summary['errors']++;
-            }
-            foreach ( $r['per_provider'] as $slug => $stats ) {
-                if ( ! isset( $summary['per_provider'][ $slug ] ) ) {
-                    $summary['per_provider'][ $slug ] = array( 'polled' => 0, 'successes' => 0, 'failures' => 0 );
-                }
-                $summary['per_provider'][ $slug ]['polled']    += $stats['polled'];
-                $summary['per_provider'][ $slug ]['successes'] += $stats['successes'];
-                $summary['per_provider'][ $slug ]['failures']  += $stats['failures'];
-            }
-        }
-
-        $summary['duration_ms'] = (int) ( microtime( true ) * 1000 ) - $start_ms;
-        update_option( self::SUMMARY_OPTION, $summary, false );
-        delete_transient( self::LOCK_KEY );
     }
 
     /**

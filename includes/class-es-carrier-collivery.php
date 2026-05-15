@@ -49,6 +49,15 @@ class ES_Carrier_Collivery extends ES_Carrier_Base {
         $to_town   = $this->resolve_town_id( $destination['city'], $destination['zone'] ?? '' );
 
         if ( ! $from_town || ! $to_town ) {
+            // Record the early-exit so the diagnostics tab still sees the attempt.
+            ES_Quote_Log::record(
+                'mds-collivery',
+                $destination['code'] ?? '',
+                count( $parcels ),
+                0,
+                false,
+                'Town resolution failed: from=' . ( $from_town ? 'ok' : ( $origin['city'] ?? '?' ) ) . ', to=' . ( $to_town ? 'ok' : ( $destination['city'] ?? '?' ) )
+            );
             return false;
         }
 

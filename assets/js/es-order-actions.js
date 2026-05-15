@@ -56,29 +56,6 @@
         postAction( 'es_force_sync', this, $( this ).closest( '.inside' ).find( '.es-action-result' ) );
     } );
 
-    // Row-action variants: data attributes are injected at render time by class-es-fulfillment-admin filter.
-    // Currently the WooCommerce row-action API only supplies a name + class string, so we look up the
-    // order id from the row's data-id attribute on click.
-    $( document ).on( 'click', '.es-action-repoll-row, .wc-action-button-es-action-repoll-row', function ( e ) {
-        e.preventDefault();
-        var $row = $( this ).closest( 'tr' );
-        var orderId = $row.data( 'id' ) || $row.attr( 'id' ).replace( /[^0-9]/g, '' );
-        if ( ! orderId ) {
-            return;
-        }
-        // Row actions don't carry nonces — bounce to the meta box instead by opening the order.
-        var editUrl = $row.find( 'a.order-view, a.row-title' ).attr( 'href' );
-        if ( editUrl ) {
-            window.location.href = editUrl + '#es-erpnext-actions';
-        }
-    } );
-
-    $( document ).on( 'click', '.es-action-force-sync-row, .wc-action-button-es-action-force-sync-row', function ( e ) {
-        e.preventDefault();
-        var $row = $( this ).closest( 'tr' );
-        var editUrl = $row.find( 'a.order-view, a.row-title' ).attr( 'href' );
-        if ( editUrl ) {
-            window.location.href = editUrl + '#es-erpnext-actions';
-        }
-    } );
+    // Row-action variants are real admin-post.php links with their own nonces;
+    // they're handled server-side, no JS interception needed.
 }( jQuery ) );
