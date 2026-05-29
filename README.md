@@ -211,6 +211,14 @@ erpnext-shipping/
 └── CLAUDE.md
 ```
 
+## Support & contributing
+
+This plugin is maintained as a by-product of running live WooCommerce + ERPNext stores, and is shared in the hope it's useful to others. Support is **best-effort, no SLA**.
+
+- **Bugs / questions** — open a [GitHub issue](https://github.com/wphamman/erpnext-shipping/issues). Include WordPress, WooCommerce, and PHP versions, plus relevant `erpnext-shipping-*` log lines from WooCommerce → Status → Logs.
+- **Pull requests** welcome. Keep the prefixes (`ES_` / `es_` / `ES_SHIPPING_`), match the existing code style, and note any new settings in `CHANGELOG.md`.
+- **New carriers** are the cleanest contribution — implement `ES_Carrier_Base` and register via the `es_shipping_carriers` filter (see [Extending](#extending)); no core changes needed.
+
 ## License
 
 GPL-2.0-or-later. See [LICENSE](LICENSE) for details.
