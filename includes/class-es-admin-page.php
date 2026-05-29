@@ -139,6 +139,8 @@ class ES_Admin_Page {
             'erp_url', 'erp_api_key', 'erp_api_secret',
             'tcg_api_token', 'mds_api_token',
             'title', 'company_name',
+            'bulk_delivery_label', 'bulk_delivery_quote_label',
+            'bulk_delivery_google_api_key',
         );
         foreach ( $text_fields as $key ) {
             if ( isset( $_POST[ $key ] ) ) {
@@ -149,6 +151,9 @@ class ES_Admin_Page {
         $number_fields = array(
             'markup_value', 'free_shipping_threshold', 'fallback_rate',
             'default_weight', 'default_length', 'default_width', 'default_height',
+            'bulk_delivery_rate_per_km', 'bulk_delivery_free_threshold',
+            'bulk_delivery_max_distance_km', 'bulk_delivery_default_distance_km',
+            'bulk_delivery_round_trip_multiplier',
         );
         foreach ( $number_fields as $key ) {
             if ( isset( $_POST[ $key ] ) ) {
@@ -156,12 +161,12 @@ class ES_Admin_Page {
             }
         }
 
-        $checkbox_fields = array( 'enabled', 'tcg_enabled', 'mds_enabled', 'debug' );
+        $checkbox_fields = array( 'enabled', 'tcg_enabled', 'mds_enabled', 'debug', 'bulk_delivery_enabled' );
         foreach ( $checkbox_fields as $key ) {
             $opts[ $key ] = isset( $_POST[ $key ] ) ? 'yes' : 'no';
         }
 
-        $select_fields = array( 'markup_type', 'free_shipping_source' );
+        $select_fields = array( 'markup_type', 'free_shipping_source', 'bulk_delivery_pricing_mode', 'bulk_delivery_distance_basis' );
         foreach ( $select_fields as $key ) {
             if ( isset( $_POST[ $key ] ) ) {
                 $opts[ $key ] = sanitize_text_field( wp_unslash( $_POST[ $key ] ) );
@@ -171,6 +176,13 @@ class ES_Admin_Page {
         // No free shipping classes (comma-separated text).
         if ( isset( $_POST['no_free_shipping_classes'] ) ) {
             $opts['no_free_shipping_classes'] = sanitize_text_field( wp_unslash( $_POST['no_free_shipping_classes'] ) );
+        }
+
+        if ( isset( $_POST['bulk_delivery_distance_map'] ) ) {
+            $opts['bulk_delivery_distance_map'] = sanitize_textarea_field( wp_unslash( $_POST['bulk_delivery_distance_map'] ) );
+        }
+        if ( isset( $_POST['bulk_delivery_bands'] ) ) {
+            $opts['bulk_delivery_bands'] = sanitize_textarea_field( wp_unslash( $_POST['bulk_delivery_bands'] ) );
         }
 
         // Watchdog settings.
@@ -413,6 +425,47 @@ class ES_Admin_Page {
                     <?php $this->render_text_row( 'no_free_shipping_classes', __( 'No Free Shipping Classes', 'erpnext-shipping' ), $v( 'no_free_shipping_classes', '' ) ); ?>
                     <tr><th></th><td><p class="description"><?php esc_html_e( 'Comma-separated shipping class slugs. Orders with items in these classes will not qualify for free shipping (e.g. "heavy, oversized").', 'erpnext-shipping' ); ?></p></td></tr>
                     <?php $this->render_number_row( 'fallback_rate', __( 'Flat Rate Fallback (R)', 'erpnext-shipping' ), $v( 'fallback_rate', '0' ), __( 'Used when carrier APIs fail.', 'erpnext-shipping' ) ); ?>
+                </table>
+
+                <!-- Own Vehicle Delivery -->
+                <h2><?php esc_html_e( 'Own Vehicle Delivery', 'erpnext-shipping' ); ?></h2>
+                <p class="description"><?php esc_html_e( 'Optional wholesale/bulk delivery rate for your own vehicles. Leave disabled on sites that should only use courier rates.', 'erpnext-shipping' ); ?></p>
+                <table class="form-table">
+                    <tr>
+                        <th><label for="bulk_delivery_enabled"><?php esc_html_e( 'Enable', 'erpnext-shipping' ); ?></label></th>
+                        <td><label><input type="checkbox" name="bulk_delivery_enabled" id="bulk_delivery_enabled" value="1" <?php checked( $v( 'bulk_delivery_enabled', 'no' ), 'yes' ); ?>> <?php esc_html_e( 'Enable own vehicle / bulk delivery rate', 'erpnext-shipping' ); ?></label></td>
+                    </tr>
+                    <?php $this->render_text_row( 'bulk_delivery_label', __( 'Rate Label', 'erpnext-shipping' ), $v( 'bulk_delivery_label', __( 'Own Vehicle Delivery', 'erpnext-shipping' ) ) ); ?>
+                    <?php $this->render_text_row( 'bulk_delivery_quote_label', __( 'Quote Rate Label', 'erpnext-shipping' ), $v( 'bulk_delivery_quote_label', __( 'Delivery Quote Required', 'erpnext-shipping' ) ), __( 'Shown when a distance band is configured as manual quote.', 'erpnext-shipping' ) ); ?>
+                    <tr>
+                        <th><label for="bulk_delivery_pricing_mode"><?php esc_html_e( 'Pricing Mode', 'erpnext-shipping' ); ?></label></th>
+                        <td>
+                            <select name="bulk_delivery_pricing_mode" id="bulk_delivery_pricing_mode">
+                                <option value="simple" <?php selected( $v( 'bulk_delivery_pricing_mode', 'simple' ), 'simple' ); ?>><?php esc_html_e( 'Simple rate per km', 'erpnext-shipping' ); ?></option>
+                                <option value="bands" <?php selected( $v( 'bulk_delivery_pricing_mode', 'simple' ), 'bands' ); ?>><?php esc_html_e( 'Distance bands', 'erpnext-shipping' ); ?></option>
+                            </select>
+                            <p class="description"><?php esc_html_e( 'Simple mode uses the rate/km and free-above fields. Bands mode uses the Distance Bands table below.', 'erpnext-shipping' ); ?></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th><label for="bulk_delivery_distance_basis"><?php esc_html_e( 'Distance Basis', 'erpnext-shipping' ); ?></label></th>
+                        <td>
+                            <select name="bulk_delivery_distance_basis" id="bulk_delivery_distance_basis">
+                                <option value="one_way" <?php selected( $v( 'bulk_delivery_distance_basis', 'one_way' ), 'one_way' ); ?>><?php esc_html_e( 'One-way distance', 'erpnext-shipping' ); ?></option>
+                                <option value="round_trip" <?php selected( $v( 'bulk_delivery_distance_basis', 'one_way' ), 'round_trip' ); ?>><?php esc_html_e( 'Round-trip distance', 'erpnext-shipping' ); ?></option>
+                            </select>
+                            <p class="description"><?php esc_html_e( 'Distance rules and Google lookups are one-way. Select round-trip to multiply that distance for pricing and band matching.', 'erpnext-shipping' ); ?></p>
+                        </td>
+                    </tr>
+                    <?php $this->render_number_row( 'bulk_delivery_round_trip_multiplier', __( 'Round-trip Multiplier', 'erpnext-shipping' ), $v( 'bulk_delivery_round_trip_multiplier', '2' ), __( 'Used only when Distance Basis is round-trip.', 'erpnext-shipping' ) ); ?>
+                    <?php $this->render_number_row( 'bulk_delivery_rate_per_km', __( 'Rate per km (R)', 'erpnext-shipping' ), $v( 'bulk_delivery_rate_per_km', '8' ) ); ?>
+                    <?php $this->render_number_row( 'bulk_delivery_free_threshold', __( 'Free Above (R)', 'erpnext-shipping' ), $v( 'bulk_delivery_free_threshold', '0' ), __( 'Set to 0 to disable free own-vehicle delivery.', 'erpnext-shipping' ) ); ?>
+                    <?php $this->render_number_row( 'bulk_delivery_max_distance_km', __( 'Maximum Distance (km)', 'erpnext-shipping' ), $v( 'bulk_delivery_max_distance_km', '0' ), __( 'Set to 0 for no maximum. Orders beyond this distance will not show this rate.', 'erpnext-shipping' ) ); ?>
+                    <?php $this->render_number_row( 'bulk_delivery_default_distance_km', __( 'Default Distance (km)', 'erpnext-shipping' ), $v( 'bulk_delivery_default_distance_km', '0' ), __( 'Fallback distance when no rule matches and no Google API key is configured. Set to 0 to hide this rate when distance is unknown.', 'erpnext-shipping' ) ); ?>
+                    <?php $this->render_textarea_row( 'bulk_delivery_distance_map', __( 'Distance Rules', 'erpnext-shipping' ), $v( 'bulk_delivery_distance_map', '' ), __( 'One rule per line: postcode or city = km. Exact postcode wins, then city. Example: 0081 = 18', 'erpnext-shipping' ) ); ?>
+                    <?php $this->render_textarea_row( 'bulk_delivery_bands', __( 'Distance Bands', 'erpnext-shipping' ), $v( 'bulk_delivery_bands', '' ), __( 'Bands mode only. One band per line: km range = delivery fee | free above. Use "quote" as the fee for manual quote bands. Example: 0-50 = 350 | 5000', 'erpnext-shipping' ) ); ?>
+                    <?php $this->render_password_row( 'bulk_delivery_google_api_key', __( 'Google Distance Matrix API Key', 'erpnext-shipping' ), $v( 'bulk_delivery_google_api_key', '' ) ); ?>
+                    <tr><th></th><td><p class="description"><?php esc_html_e( 'Optional. When set, road distance is calculated from the dispatch location to the customer address and cached for 12 hours.', 'erpnext-shipping' ); ?></p></td></tr>
                 </table>
 
                 <!-- Default Parcel Dimensions -->
@@ -789,6 +842,23 @@ class ES_Admin_Page {
         <tr>
             <th><label for="<?php echo esc_attr( $name ); ?>"><?php echo esc_html( $label ); ?></label></th>
             <td><input type="password" name="<?php echo esc_attr( $name ); ?>" id="<?php echo esc_attr( $name ); ?>" class="regular-text" value="<?php echo esc_attr( $value ); ?>"></td>
+        </tr>
+        <?php
+    }
+
+    /**
+     * Helper: render a textarea row.
+     */
+    private function render_textarea_row( $name, $label, $value, $description = '' ) {
+        ?>
+        <tr>
+            <th><label for="<?php echo esc_attr( $name ); ?>"><?php echo esc_html( $label ); ?></label></th>
+            <td>
+                <textarea name="<?php echo esc_attr( $name ); ?>" id="<?php echo esc_attr( $name ); ?>" class="large-text code" rows="6"><?php echo esc_textarea( $value ); ?></textarea>
+                <?php if ( $description ) : ?>
+                    <p class="description"><?php echo esc_html( $description ); ?></p>
+                <?php endif; ?>
+            </td>
         </tr>
         <?php
     }

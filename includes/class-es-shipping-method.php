@@ -162,6 +162,102 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'custom_attributes' => array( 'min' => '0', 'step' => '1' ),
             ),
 
+            // ── Own Vehicle Delivery ──
+            'bulk_delivery_heading' => array(
+                'title' => __( 'Own Vehicle Delivery', 'erpnext-shipping' ),
+                'type'  => 'title',
+            ),
+            'bulk_delivery_enabled' => array(
+                'title'   => __( 'Enable', 'erpnext-shipping' ),
+                'type'    => 'checkbox',
+                'label'   => __( 'Enable own vehicle / bulk delivery rate', 'erpnext-shipping' ),
+                'default' => 'no',
+            ),
+            'bulk_delivery_label' => array(
+                'title'       => __( 'Rate Label', 'erpnext-shipping' ),
+                'type'        => 'text',
+                'default'     => __( 'Own Vehicle Delivery', 'erpnext-shipping' ),
+                'description' => __( 'Shown to customers at checkout.', 'erpnext-shipping' ),
+            ),
+            'bulk_delivery_quote_label' => array(
+                'title'       => __( 'Quote Rate Label', 'erpnext-shipping' ),
+                'type'        => 'text',
+                'default'     => __( 'Delivery Quote Required', 'erpnext-shipping' ),
+                'description' => __( 'Shown when a distance band is configured as manual quote.', 'erpnext-shipping' ),
+            ),
+            'bulk_delivery_pricing_mode' => array(
+                'title'       => __( 'Pricing Mode', 'erpnext-shipping' ),
+                'type'        => 'select',
+                'options'     => array(
+                    'simple' => __( 'Simple rate per km', 'erpnext-shipping' ),
+                    'bands'  => __( 'Distance bands', 'erpnext-shipping' ),
+                ),
+                'default'     => 'simple',
+                'description' => __( 'Use simple rate/km pricing or per-distance delivery fees and free-delivery thresholds.', 'erpnext-shipping' ),
+            ),
+            'bulk_delivery_distance_basis' => array(
+                'title'       => __( 'Distance Basis', 'erpnext-shipping' ),
+                'type'        => 'select',
+                'options'     => array(
+                    'one_way'    => __( 'One-way distance', 'erpnext-shipping' ),
+                    'round_trip' => __( 'Round-trip distance', 'erpnext-shipping' ),
+                ),
+                'default'     => 'one_way',
+                'description' => __( 'Distance rules and Google lookups are one-way. Select round-trip to multiply that distance for pricing and band matching.', 'erpnext-shipping' ),
+            ),
+            'bulk_delivery_round_trip_multiplier' => array(
+                'title'             => __( 'Round-trip Multiplier', 'erpnext-shipping' ),
+                'type'              => 'number',
+                'default'           => '2',
+                'description'       => __( 'Used only when Distance Basis is round-trip.', 'erpnext-shipping' ),
+                'custom_attributes' => array( 'min' => '1', 'step' => '0.1' ),
+            ),
+            'bulk_delivery_rate_per_km' => array(
+                'title'             => __( 'Rate per km (R)', 'erpnext-shipping' ),
+                'type'              => 'number',
+                'default'           => '8',
+                'custom_attributes' => array( 'min' => '0', 'step' => '0.01' ),
+            ),
+            'bulk_delivery_free_threshold' => array(
+                'title'             => __( 'Free Above (R)', 'erpnext-shipping' ),
+                'type'              => 'number',
+                'default'           => '0',
+                'description'       => __( 'Set to 0 to disable free own-vehicle delivery.', 'erpnext-shipping' ),
+                'custom_attributes' => array( 'min' => '0', 'step' => '1' ),
+            ),
+            'bulk_delivery_max_distance_km' => array(
+                'title'             => __( 'Maximum Distance (km)', 'erpnext-shipping' ),
+                'type'              => 'number',
+                'default'           => '0',
+                'description'       => __( 'Set to 0 for no maximum. Orders beyond this distance will not show this rate.', 'erpnext-shipping' ),
+                'custom_attributes' => array( 'min' => '0', 'step' => '0.1' ),
+            ),
+            'bulk_delivery_default_distance_km' => array(
+                'title'             => __( 'Default Distance (km)', 'erpnext-shipping' ),
+                'type'              => 'number',
+                'default'           => '0',
+                'description'       => __( 'Fallback distance when no postcode/city rule matches and no Google API key is configured. Set to 0 to hide the rate when distance is unknown.', 'erpnext-shipping' ),
+                'custom_attributes' => array( 'min' => '0', 'step' => '0.1' ),
+            ),
+            'bulk_delivery_distance_map' => array(
+                'title'       => __( 'Distance Rules', 'erpnext-shipping' ),
+                'type'        => 'textarea',
+                'default'     => '',
+                'description' => __( 'One rule per line: postcode or city = km. Exact postcode wins, then city. Example: 0081 = 18', 'erpnext-shipping' ),
+            ),
+            'bulk_delivery_bands' => array(
+                'title'       => __( 'Distance Bands', 'erpnext-shipping' ),
+                'type'        => 'textarea',
+                'default'     => '',
+                'description' => __( 'One band per line: km range = delivery fee | free above. Use "quote" as the fee for manual quote bands. Example: 0-50 = 350 | 5000', 'erpnext-shipping' ),
+            ),
+            'bulk_delivery_google_api_key' => array(
+                'title'       => __( 'Google Distance Matrix API Key', 'erpnext-shipping' ),
+                'type'        => 'password',
+                'default'     => '',
+                'description' => __( 'Optional. When set, road distance is calculated from the selected dispatch location to the customer address and cached for 12 hours.', 'erpnext-shipping' ),
+            ),
+
             // ── Defaults ──
             'defaults_heading' => array(
                 'title' => __( 'Defaults for Missing Data', 'erpnext-shipping' ),
@@ -488,15 +584,22 @@ class ES_Shipping_Method extends WC_Shipping_Method {
         }
         $this->log( 'Fulfillment plan: ' . wp_json_encode( $plan ) );
 
-        // 4. Get carriers.
+        // 4. Add optional own-vehicle / bulk delivery rate.
+        $bulk_delivery_added = $this->maybe_add_bulk_delivery_rate( $destination, $plan, $cart_total );
+
+        // 5. Get carriers.
         $carriers = $this->get_carriers();
         if ( empty( $carriers ) ) {
+            if ( $bulk_delivery_added ) {
+                $this->log( 'No carriers configured, but own vehicle delivery was added.' );
+                return;
+            }
             $this->log( 'No carriers configured, adding fallback rate.' );
             $this->add_fallback_rate();
             return;
         }
 
-        // 5. Build parcels and get rates per dispatch location.
+        // 6. Build parcels and get rates per dispatch location.
         $estimator = new ES_Parcel_Estimator(
             floatval( $this->get_option( 'default_weight', 0.5 ) ),
             floatval( $this->get_option( 'default_length', 20 ) ),
@@ -582,7 +685,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             $location_rates[ $lq['location'] ] = $rates;
         }
 
-        // 6. Combine rates.
+        // 7. Combine rates.
         $all_rates = array();
         if ( $is_split ) {
             $all_rates = $this->combine_split_rates( $location_rates );
@@ -593,11 +696,15 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             $all_rates = $location_rates[ $loc ] ?? array();
         }
 
-        // 7. Group by tier, pick cheapest per tier.
+        // 8. Group by tier, pick cheapest per tier.
         $tiered = $this->group_by_tier( $all_rates );
 
-        // 8. Apply markup and add rates.
+        // 9. Apply markup and add rates.
         if ( empty( $tiered ) ) {
+            if ( $bulk_delivery_added ) {
+                $this->log( 'No rates from carriers, but own vehicle delivery was added.' );
+                return;
+            }
             $this->log( 'No rates from carriers, adding fallback.' );
             $this->add_fallback_rate();
             return;
@@ -635,6 +742,462 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             ) );
             $this->log( 'Rate added: ' . $label . ' R' . $cost . ' (' . $rate['carrier'] . ')' );
         }
+    }
+
+    /**
+     * Add own-vehicle / bulk delivery rate when enabled and distance is known.
+     *
+     * @param array $destination Destination address.
+     * @param array $plan Fulfillment plan.
+     * @param float $cart_total Cart subtotal.
+     * @return bool True when the rate was added.
+     */
+    private function maybe_add_bulk_delivery_rate( $destination, $plan, $cart_total ) {
+        if ( 'yes' !== $this->get_option( 'bulk_delivery_enabled', 'no' ) ) {
+            return false;
+        }
+
+        $origin      = $this->get_bulk_delivery_origin( $plan );
+        $distance_km = $this->resolve_bulk_delivery_distance_km( $origin, $destination );
+        if ( $distance_km <= 0 ) {
+            $this->log( 'Own vehicle delivery skipped: distance unknown.' );
+            return false;
+        }
+
+        $priced_distance_km = $this->get_bulk_delivery_priced_distance_km( $distance_km );
+        $pricing_mode       = $this->get_option( 'bulk_delivery_pricing_mode', 'simple' );
+        $label              = $this->get_option( 'bulk_delivery_label', __( 'Own Vehicle Delivery', 'erpnext-shipping' ) );
+
+        if ( 'bands' === $pricing_mode ) {
+            $band = $this->match_bulk_delivery_band( $priced_distance_km );
+            if ( ! $band ) {
+                $this->log( 'Own vehicle delivery skipped: no band for ' . round( $priced_distance_km, 1 ) . 'km.' );
+                return false;
+            }
+
+            if ( ! empty( $band['manual_quote'] ) ) {
+                $quote_label = $this->get_option( 'bulk_delivery_quote_label', __( 'Delivery Quote Required', 'erpnext-shipping' ) );
+                $this->add_rate( array(
+                    'id'        => $this->id . '_bulk_delivery_quote',
+                    'label'     => $quote_label,
+                    'cost'      => 0,
+                    'meta_data' => array(
+                        '_es_bulk_delivery'       => '1',
+                        '_es_bulk_delivery_quote' => '1',
+                        'Distance'                => $this->format_bulk_delivery_distance_meta( $distance_km, $priced_distance_km ),
+                        'Band'                    => $band['label'],
+                        'Rate'                    => __( 'Manual delivery quote required before processing', 'erpnext-shipping' ),
+                    ),
+                ) );
+
+                $this->log( 'Own vehicle delivery quote rate added from band ' . $band['label'] . ': ' . round( $priced_distance_km, 1 ) . 'km.' );
+                return true;
+            }
+
+            $is_free = $band['free_threshold'] > 0 && $cart_total >= $band['free_threshold'];
+            $cost    = $is_free ? 0 : $band['fee'];
+            $meta    = array(
+                '_es_bulk_delivery' => '1',
+                'Distance'          => $this->format_bulk_delivery_distance_meta( $distance_km, $priced_distance_km ),
+                'Band'              => $band['label'],
+                'Rate'              => $is_free ? __( 'Free delivery threshold met', 'erpnext-shipping' ) : __( 'Distance-band delivery fee', 'erpnext-shipping' ),
+            );
+
+            if ( $band['free_threshold'] > 0 ) {
+                $meta['Free Above'] = 'R' . wc_format_decimal( $band['free_threshold'], 2 );
+            }
+
+            $this->add_rate( array(
+                'id'        => $this->id . '_bulk_delivery',
+                'label'     => $label,
+                'cost'      => $cost,
+                'meta_data' => $meta,
+            ) );
+
+            $this->log( 'Own vehicle delivery added from band ' . $band['label'] . ': ' . round( $priced_distance_km, 1 ) . 'km, cost R' . $cost . ( $is_free ? ' (free threshold met)' : '' ) );
+            return true;
+        }
+
+        $rate_per_km = floatval( $this->get_option( 'bulk_delivery_rate_per_km', 8 ) );
+        if ( $rate_per_km <= 0 ) {
+            $this->log( 'Own vehicle delivery enabled but rate per km is zero.' );
+            return false;
+        }
+
+        $max_distance = floatval( $this->get_option( 'bulk_delivery_max_distance_km', 0 ) );
+        if ( $max_distance > 0 && $priced_distance_km > $max_distance ) {
+            $this->log( 'Own vehicle delivery skipped: ' . round( $priced_distance_km, 1 ) . 'km exceeds max ' . $max_distance . 'km.' );
+            return false;
+        }
+
+        $free_threshold = floatval( $this->get_option( 'bulk_delivery_free_threshold', 0 ) );
+        $is_free        = $free_threshold > 0 && $cart_total >= $free_threshold;
+        $cost           = $is_free ? 0 : ceil( ( $priced_distance_km * $rate_per_km ) / 5 ) * 5;
+
+        $this->add_rate( array(
+            'id'        => $this->id . '_bulk_delivery',
+            'label'     => $label,
+            'cost'      => $cost,
+            'meta_data' => array(
+                '_es_bulk_delivery' => '1',
+                'Distance'          => $this->format_bulk_delivery_distance_meta( $distance_km, $priced_distance_km ),
+                'Rate'              => $is_free ? __( 'Free delivery threshold met', 'erpnext-shipping' ) : sprintf( 'R%s/km', wc_format_decimal( $rate_per_km, 2 ) ),
+            ),
+        ) );
+
+        $this->log( 'Own vehicle delivery added: ' . round( $priced_distance_km, 1 ) . 'km, cost R' . $cost . ( $is_free ? ' (free threshold met)' : '' ) );
+        return true;
+    }
+
+    /**
+     * Convert one-way delivery distance to the configured pricing distance.
+     *
+     * @param float $one_way_km One-way distance in km.
+     * @return float Distance used for pricing and band matching.
+     */
+    private function get_bulk_delivery_priced_distance_km( $one_way_km ) {
+        if ( 'round_trip' !== $this->get_option( 'bulk_delivery_distance_basis', 'one_way' ) ) {
+            return $one_way_km;
+        }
+
+        $multiplier = floatval( $this->get_option( 'bulk_delivery_round_trip_multiplier', 2 ) );
+        if ( $multiplier < 1 ) {
+            $multiplier = 2;
+        }
+
+        return $one_way_km * $multiplier;
+    }
+
+    /**
+     * Format distance metadata shown under the checkout rate.
+     *
+     * @param float $one_way_km One-way distance in km.
+     * @param float $priced_distance_km Distance used for pricing.
+     * @return string Human-readable distance.
+     */
+    private function format_bulk_delivery_distance_meta( $one_way_km, $priced_distance_km ) {
+        if ( 'round_trip' === $this->get_option( 'bulk_delivery_distance_basis', 'one_way' ) ) {
+            return round( $priced_distance_km, 1 ) . ' km round trip (' . round( $one_way_km, 1 ) . ' km one way)';
+        }
+
+        return round( $one_way_km, 1 ) . ' km';
+    }
+
+    /**
+     * Find the configured band for a priced delivery distance.
+     *
+     * @param float $distance_km Distance used for pricing.
+     * @return array|null Matched band.
+     */
+    private function match_bulk_delivery_band( $distance_km ) {
+        foreach ( $this->parse_bulk_delivery_bands() as $band ) {
+            if ( $distance_km >= $band['min'] && $distance_km <= $band['max'] ) {
+                return $band;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Parse admin-entered own-vehicle delivery bands.
+     *
+     * Supported examples:
+     * - 0-50 = 350 | 5000
+     * - 51-75 = R500 | R7,500
+     * - 100+ = 1000 | 15000
+     * - 100+ = quote
+     *
+     * @return array<int,array<string,float|string|bool>>
+     */
+    private function parse_bulk_delivery_bands() {
+        $raw = trim( (string) $this->get_option( 'bulk_delivery_bands', '' ) );
+        if ( '' === $raw ) {
+            return array();
+        }
+
+        $bands = array();
+        foreach ( preg_split( '/\r\n|\r|\n/', $raw ) as $line ) {
+            $line = trim( $line );
+            if ( '' === $line || '#' === substr( $line, 0, 1 ) ) {
+                continue;
+            }
+
+            $parts = preg_split( '/\s*[=:]\s*/', $line, 2 );
+            if ( count( $parts ) !== 2 ) {
+                continue;
+            }
+
+            $range = $this->parse_bulk_delivery_band_range( $parts[0] );
+            if ( ! $range ) {
+                continue;
+            }
+
+            $values       = preg_split( '/\s*\|\s*/', $parts[1] );
+            $fee_raw      = trim( (string) ( $values[0] ?? '' ) );
+            $manual_quote = $this->is_bulk_delivery_quote_value( $fee_raw );
+
+            if ( $manual_quote ) {
+                $fee            = 0;
+                $free_threshold = 0;
+            } else {
+                $fee            = $this->parse_bulk_delivery_number( $fee_raw );
+                $free_threshold = $this->parse_bulk_delivery_number( $values[1] ?? '' );
+                if ( $fee < 0 ) {
+                    continue;
+                }
+            }
+
+            $bands[] = array(
+                'min'            => $range['min'],
+                'max'            => $range['max'],
+                'fee'            => $fee,
+                'free_threshold' => max( 0, $free_threshold ),
+                'label'          => $range['label'],
+                'manual_quote'   => $manual_quote,
+            );
+        }
+
+        usort( $bands, function ( $a, $b ) {
+            return $a['min'] <=> $b['min'];
+        } );
+
+        return $bands;
+    }
+
+    /**
+     * Parse a km range from a band line.
+     *
+     * @param string $raw Raw range text.
+     * @return array|null Parsed range.
+     */
+    private function parse_bulk_delivery_band_range( $raw ) {
+        $raw = strtolower( trim( $raw ) );
+        $raw = str_replace( array( 'km', ' ' ), '', $raw );
+
+        if ( preg_match( '/^(\d+(?:[\.,]\d+)?)\-(\d+(?:[\.,]\d+)?)$/', $raw, $m ) ) {
+            $min = $this->parse_bulk_delivery_number( $m[1] );
+            $max = $this->parse_bulk_delivery_number( $m[2] );
+        } elseif ( preg_match( '/^(\d+(?:[\.,]\d+)?)\+$/', $raw, $m ) ) {
+            $min = $this->parse_bulk_delivery_number( $m[1] );
+            $max = INF;
+        } elseif ( preg_match( '/^<=?(\d+(?:[\.,]\d+)?)$/', $raw, $m ) ) {
+            $min = 0;
+            $max = $this->parse_bulk_delivery_number( $m[1] );
+        } else {
+            return null;
+        }
+
+        if ( $min < 0 || $max < $min ) {
+            return null;
+        }
+
+        return array(
+            'min'   => $min,
+            'max'   => $max,
+            'label' => is_infinite( $max ) ? round( $min, 1 ) . '+ km' : round( $min, 1 ) . '-' . round( $max, 1 ) . ' km',
+        );
+    }
+
+    /**
+     * Parse a money/km number from admin text.
+     *
+     * @param string $raw Raw value.
+     * @return float Parsed number.
+     */
+    private function parse_bulk_delivery_number( $raw ) {
+        $value = preg_replace( '/[^0-9,\.\-]/', '', (string) $raw );
+        if ( '' === $value || '-' === $value ) {
+            return 0;
+        }
+
+        if ( false !== strpos( $value, ',' ) && false !== strpos( $value, '.' ) ) {
+            $value = str_replace( ',', '', $value );
+        } elseif ( preg_match( '/^\d{1,3}(,\d{3})+$/', $value ) ) {
+            $value = str_replace( ',', '', $value );
+        } else {
+            $value = str_replace( ',', '.', $value );
+        }
+
+        return floatval( $value );
+    }
+
+    /**
+     * Check if a band value means "manual quote".
+     *
+     * @param string $raw Raw fee value.
+     * @return bool True when manual quote is requested.
+     */
+    private function is_bulk_delivery_quote_value( $raw ) {
+        $value = strtolower( trim( (string) $raw ) );
+        return in_array( $value, array( 'quote', 'manual', 'manual quote', 'quote required', 'manual_quote' ), true );
+    }
+
+    /**
+     * Resolve the dispatch origin for own-vehicle distance calculations.
+     *
+     * @param array $plan Fulfillment plan.
+     * @return array Origin address.
+     */
+    private function get_bulk_delivery_origin( $plan ) {
+        $location_id = '';
+
+        if ( isset( $plan['type'] ) && 'single' === $plan['type'] ) {
+            $location_id = $plan['location'] ?? '';
+        } elseif ( isset( $plan['type'] ) && 'chooseable' === $plan['type'] && ! empty( $plan['locations'] ) ) {
+            $location_id = reset( $plan['locations'] );
+        } elseif ( isset( $plan['type'] ) && 'split' === $plan['type'] && ! empty( $plan['shipments'] ) ) {
+            $keys        = array_keys( $plan['shipments'] );
+            $location_id = reset( $keys );
+        }
+
+        if ( ! $location_id ) {
+            $locations = self::get_locations();
+            if ( ! empty( $locations ) ) {
+                $first       = reset( $locations );
+                $location_id = $first['id'] ?? '';
+            }
+        }
+
+        return $this->get_origin( $location_id );
+    }
+
+    /**
+     * Resolve delivery kilometres by postcode/city map, Google Distance Matrix, or default.
+     *
+     * @param array $origin Origin address.
+     * @param array $destination Destination address.
+     * @return float Distance in km, or 0 when unknown.
+     */
+    private function resolve_bulk_delivery_distance_km( $origin, $destination ) {
+        $mapped = $this->get_bulk_delivery_distance_from_map( $destination );
+        if ( $mapped > 0 ) {
+            return $mapped;
+        }
+
+        $google = $this->get_bulk_delivery_distance_from_google( $origin, $destination );
+        if ( $google > 0 ) {
+            return $google;
+        }
+
+        return floatval( $this->get_option( 'bulk_delivery_default_distance_km', 0 ) );
+    }
+
+    /**
+     * Look up distance from admin-maintained postcode/city rules.
+     *
+     * @param array $destination Destination address.
+     * @return float Distance in km.
+     */
+    private function get_bulk_delivery_distance_from_map( $destination ) {
+        $raw = trim( (string) $this->get_option( 'bulk_delivery_distance_map', '' ) );
+        if ( '' === $raw ) {
+            return 0;
+        }
+
+        $postcode = strtolower( trim( (string) ( $destination['code'] ?? '' ) ) );
+        $city     = strtolower( trim( (string) ( $destination['city'] ?? '' ) ) );
+        $rules    = array();
+
+        foreach ( preg_split( '/\r\n|\r|\n/', $raw ) as $line ) {
+            $line = trim( $line );
+            if ( '' === $line || '#' === substr( $line, 0, 1 ) ) {
+                continue;
+            }
+            $parts = preg_split( '/\s*[=:]\s*/', $line, 2 );
+            if ( count( $parts ) !== 2 ) {
+                continue;
+            }
+            $key = strtolower( trim( $parts[0] ) );
+            $km  = floatval( str_replace( ',', '.', trim( $parts[1] ) ) );
+            if ( '' !== $key && $km > 0 ) {
+                $rules[ $key ] = $km;
+            }
+        }
+
+        if ( $postcode && isset( $rules[ $postcode ] ) ) {
+            return $rules[ $postcode ];
+        }
+        if ( $city && isset( $rules[ $city ] ) ) {
+            return $rules[ $city ];
+        }
+
+        return 0;
+    }
+
+    /**
+     * Calculate road distance via Google Distance Matrix when configured.
+     *
+     * @param array $origin Origin address.
+     * @param array $destination Destination address.
+     * @return float Distance in km.
+     */
+    private function get_bulk_delivery_distance_from_google( $origin, $destination ) {
+        $api_key = trim( (string) $this->get_option( 'bulk_delivery_google_api_key', '' ) );
+        if ( '' === $api_key ) {
+            return 0;
+        }
+
+        $origin_address      = $this->format_address_for_distance( $origin );
+        $destination_address = $this->format_address_for_distance( $destination );
+        if ( '' === $origin_address || '' === $destination_address ) {
+            return 0;
+        }
+
+        $cache_key = 'es_bulk_distance_' . md5( strtolower( $origin_address . '|' . $destination_address ) );
+        $cached    = get_transient( $cache_key );
+        if ( false !== $cached ) {
+            return floatval( $cached );
+        }
+
+        $url = add_query_arg(
+            array(
+                'units'        => 'metric',
+                'origins'      => $origin_address,
+                'destinations' => $destination_address,
+                'key'          => $api_key,
+            ),
+            'https://maps.googleapis.com/maps/api/distancematrix/json'
+        );
+
+        $response = wp_remote_get( $url, array( 'timeout' => 8 ) );
+        if ( is_wp_error( $response ) ) {
+            $this->log( 'Google distance lookup failed: ' . $response->get_error_message() );
+            return 0;
+        }
+
+        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        if (
+            ! is_array( $body )
+            || ( $body['status'] ?? '' ) !== 'OK'
+            || ( $body['rows'][0]['elements'][0]['status'] ?? '' ) !== 'OK'
+            || empty( $body['rows'][0]['elements'][0]['distance']['value'] )
+        ) {
+            $this->log( 'Google distance lookup returned no usable distance.' );
+            return 0;
+        }
+
+        $km = floatval( $body['rows'][0]['elements'][0]['distance']['value'] ) / 1000;
+        set_transient( $cache_key, $km, 12 * HOUR_IN_SECONDS );
+        return $km;
+    }
+
+    /**
+     * Format a carrier-style address array for distance lookup.
+     *
+     * @param array $address Address fields.
+     * @return string Address string.
+     */
+    private function format_address_for_distance( $address ) {
+        $parts = array_filter( array(
+            $address['street_address'] ?? '',
+            $address['local_area'] ?? '',
+            $address['city'] ?? '',
+            $address['zone'] ?? '',
+            $address['code'] ?? '',
+            $address['country'] ?? 'ZA',
+        ) );
+        return trim( implode( ', ', $parts ) );
     }
 
     /**

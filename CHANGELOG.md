@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.5] - 2026-05-29
+
+### Added
+- **HPOS compatibility declaration.** Declares `custom_order_tables` compatibility via `before_woocommerce_init` / `FeaturesUtil::declare_compatibility()`. The plugin already used HPOS-safe order APIs; this stops WooCommerce 10.x flagging it as "incompatible" on Settings → Advanced → Features and keeps High-Performance Order Storage enabled. Cart/Checkout Blocks compatibility is intentionally **not** declared — the pickup-location selector uses classic checkout hooks and would not render in the Checkout block.
+- **Plugin header compatibility tags**: `Requires at least: 6.0`, `Tested up to: 7.0`, `Requires PHP: 8.0`, `WC requires at least: 8.0`, `WC tested up to: 10.8` — removes "Untested with your version" warnings on WP 7.0 / WC 10.8.
+
+## [1.12.4] - 2026-05-16
+
+### Added
+- **Manual quote distance bands** for Own Vehicle Delivery. In banded mode, use `quote` as the delivery fee (for example `100+ = quote`) to show a dedicated quote-required checkout rate instead of hiding the method.
+- **Quote Rate Label** setting for the manual quote band label shown at checkout.
+
+## [1.12.3] - 2026-05-16
+
+### Added
+- **Banded own-vehicle delivery pricing**. Own Vehicle Delivery can now use distance bands with a fixed delivery fee and per-band free-delivery threshold, e.g. `0-50 = 350 | 5000`.
+- **Distance basis setting** for own-vehicle pricing. Keep one-way distance behaviour for existing setups, or price/match bands on round-trip distance with a configurable multiplier.
+
+## [1.12.2] - 2026-05-16
+
+### Added
+- **Own Vehicle Delivery rate** for wholesale/bulk orders. Default off per shipping-method instance, so retail sites keep existing courier behaviour unless enabled.
+- Distance-based pricing at a configurable Rand/km rate, with optional free-delivery threshold, maximum distance, postcode/city distance rules, and optional Google Distance Matrix lookup with 12-hour caching.
+
 ## [1.12.1] - 2026-05-15
 
 ### Fixed

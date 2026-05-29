@@ -2,9 +2,14 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.12.1
+ * Version: 1.12.5
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
+ * Requires at least: 6.0
+ * Tested up to: 7.0
+ * Requires PHP: 8.0
+ * WC requires at least: 8.0
+ * WC tested up to: 10.8
  * Text Domain: erpnext-shipping
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -12,8 +17,21 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.12.1' );
+define( 'ES_SHIPPING_VERSION', '1.12.5' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
+
+// Declare HPOS (High-Performance Order Storage) compatibility. The plugin already
+// uses HPOS-safe order APIs (wc_get_order, $order->get_meta, feature-detected order
+// list columns); this declaration stops WooCommerce flagging it as "incompatible"
+// on the Settings > Advanced > Features screen and keeps HPOS enabled.
+// NOTE: Cart/Checkout Blocks compatibility is intentionally NOT declared — the
+// pickup-location selector relies on classic checkout hooks and would not render in
+// the Checkout block. Declaring it would hide a warning while the feature still broke.
+add_action( 'before_woocommerce_init', function () {
+    if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
+    }
+} );
 
 // Add custom 15-minute cron interval (registered early so activation hook can use it).
 add_filter( 'cron_schedules', function ( $schedules ) {
@@ -276,7 +294,7 @@ add_filter( 'woocommerce_package_rates', function ( $rates, $package ) {
     // Find all carrier rates (excluding free and locker — locker kept for future support).
     $carrier_rates = array();
     foreach ( $rates as $rate_id => $rate ) {
-        if ( 'erpnext_shipping' === $rate->method_id && ! $is_free_rate( $rate_id, $rate ) && substr( $rate_id, -7 ) !== '_locker' ) {
+        if ( 'erpnext_shipping' === $rate->method_id && ! $is_free_rate( $rate_id, $rate ) && substr( $rate_id, -7 ) !== '_locker' && substr( $rate_id, -14 ) !== '_bulk_delivery' ) {
             $carrier_rates[ $rate_id ] = $rate;
         }
     }
