@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.7] - 2026-06-04
+
+### Fixed
+- **WP-Cron stock sync silently dead since v1.12.0.** The scheduled stock sync loaded `ES_Stock_Sync` directly (WP-Cron does not fire `woocommerce_shipping_init`) but not its `ES_ERPNext_Client` dependency, so every cron run fatalled with `Class "ES_ERPNext_Client" not found` — an `Error`, not caught by the cron loop's `catch (Exception)`. Stock levels only updated when an admin manually triggered a sync. `ES_Stock_Sync` now loads the client itself, so cron, AJAX, and any other caller work regardless of context.
+- **Admin: "Serviced by" checkboxes rendered as full-width bars** in the dispatch-location editor (the card's `input { width:100% }` rule bled onto the checkboxes). Pinned them to `width:auto` with a flex label layout.
+
+## [1.12.6] - 2026-06-04
+
+### Added
+- **Pickup feasibility gate (multi-branch carts).** Local Pickup now only offers pickup locations whose supplying warehouse(s) hold the *entire* cart. If a cart spans branches that no single pickup point can supply, the pickup option shows a prominent notice and checkout is blocked for pickup — preventing free cross-branch stock transfers. Delivery is unaffected (it still quotes split shipments).
+- **"Serviced by warehouse(s)" mapping on Collection Points.** Each collection point can declare which warehouse location(s) supply it (e.g. a satellite pickup point served from a central warehouse). Feasibility is checked against those warehouses' per-location stock (`_stock_at_<term>`). Items with no per-location stock data (fees/services) are ignored. **Collection points with no `serviced_by` configured do not offer pickup until mapped.**
+
 ## [1.12.5] - 2026-05-29
 
 ### Added

@@ -15,6 +15,14 @@ class ES_Stock_Sync {
     public function __construct( $settings ) {
         $this->erp_url = rtrim( $settings['url'] ?? '', '/' );
         $this->erp_key = $settings['api_key'] ?? '';
+        // WP-Cron and AJAX load this class directly without firing
+        // woocommerce_shipping_init, so the ES_ERPNext_Client dependency may not be
+        // loaded yet. Without this guard, WP-Cron stock sync fatals with a
+        // "Class ES_ERPNext_Client not found" Error (uncaught — it is not an Exception),
+        // which silently broke scheduled syncs from v1.12.0 onward.
+        if ( ! class_exists( 'ES_ERPNext_Client' ) ) {
+            require_once ES_SHIPPING_PATH . 'includes/class-es-erpnext-client.php';
+        }
         // Stock sync uses a longer timeout than the default client (Bin endpoint can be slow on large catalogues).
         $this->client  = new ES_ERPNext_Client( $settings, 30 );
     }

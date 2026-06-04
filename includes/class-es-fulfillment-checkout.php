@@ -43,29 +43,44 @@ class ES_Fulfillment_Checkout {
             return;
         }
 
+        // Only offer pickup locations whose supplying warehouse(s) hold the ENTIRE
+        // cart — otherwise collecting there would force a costly cross-branch transfer.
+        $feasible = array();
+        foreach ( $pickup_locations as $loc ) {
+            if ( self::cart_collectable_at( $loc, $locations ) ) {
+                $feasible[] = $loc;
+            }
+        }
+
         $chosen_methods = WC()->session ? WC()->session->get( 'chosen_shipping_methods', array() ) : array();
         $is_selected    = in_array( $method->id, $chosen_methods, true );
         $saved_loc      = WC()->session ? WC()->session->get( 'es_pickup_location_id', '' ) : '';
         ?>
         <div class="es-pickup-selector" data-rate-id="<?php echo esc_attr( $method->id ); ?>" style="<?php echo $is_selected ? '' : 'display:none;'; ?>">
-            <label for="es_pickup_location_<?php echo esc_attr( $index ); ?>" class="es-pickup-label">
-                <?php esc_html_e( 'Pickup Location', 'erpnext-shipping' ); ?>
-            </label>
-            <select name="es_pickup_location_id" id="es_pickup_location_<?php echo esc_attr( $index ); ?>" class="es-pickup-select">
-                <option value=""><?php esc_html_e( '— Select pickup location —', 'erpnext-shipping' ); ?></option>
-                <?php foreach ( $pickup_locations as $loc ) : ?>
-                    <option value="<?php echo esc_attr( $loc['id'] ); ?>"
-                            data-message="<?php echo esc_attr( $loc['customer_message'] ?? '' ); ?>"
-                            data-address="<?php echo esc_attr( self::format_address( $loc ) ); ?>"
-                            <?php selected( $saved_loc, $loc['id'] ); ?>>
-                        <?php echo esc_html( $loc['name'] . ' — ' . ( $loc['city'] ?? '' ) ); ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-            <div class="es-pickup-details" style="display:none;">
-                <p class="es-pickup-address"></p>
-                <p class="es-pickup-message"></p>
-            </div>
+            <?php if ( empty( $feasible ) ) : ?>
+                <div class="es-pickup-unavailable">
+                    <?php esc_html_e( 'This order includes items from more than one branch, so it can’t be collected as a single pickup. Please choose a delivery option instead.', 'erpnext-shipping' ); ?>
+                </div>
+            <?php else : ?>
+                <label for="es_pickup_location_<?php echo esc_attr( $index ); ?>" class="es-pickup-label">
+                    <?php esc_html_e( 'Pickup Location', 'erpnext-shipping' ); ?>
+                </label>
+                <select name="es_pickup_location_id" id="es_pickup_location_<?php echo esc_attr( $index ); ?>" class="es-pickup-select">
+                    <option value=""><?php esc_html_e( '— Select pickup location —', 'erpnext-shipping' ); ?></option>
+                    <?php foreach ( $feasible as $loc ) : ?>
+                        <option value="<?php echo esc_attr( $loc['id'] ); ?>"
+                                data-message="<?php echo esc_attr( $loc['customer_message'] ?? '' ); ?>"
+                                data-address="<?php echo esc_attr( self::format_address( $loc ) ); ?>"
+                                <?php selected( $saved_loc, $loc['id'] ); ?>>
+                            <?php echo esc_html( $loc['name'] . ' — ' . ( $loc['city'] ?? '' ) ); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <div class="es-pickup-details" style="display:none;">
+                    <p class="es-pickup-address"></p>
+                    <p class="es-pickup-message"></p>
+                </div>
+            <?php endif; ?>
         </div>
         <script>
         (function() {
@@ -157,12 +172,150 @@ class ES_Fulfillment_Checkout {
             return;
         }
 
+        $all_locations = get_option( 'es_shipping_locations', array() );
+        $feasible_ids  = array();
+        foreach ( $all_locations as $loc ) {
+            if ( ! empty( $loc['pickup_enabled'] ) && self::cart_collectable_at( $loc, $all_locations ) ) {
+                $feasible_ids[] = $loc['id'];
+            }
+        }
+
         $location_id = sanitize_text_field( $_POST['es_pickup_location_id'] ?? '' );
-        if ( empty( $location_id ) ) {
+
+        if ( empty( $feasible_ids ) ) {
+            // No single pickup point can supply the whole cart → block (margin protection).
+            wc_add_notice( __( 'Your order includes items from more than one branch, so it can’t be collected as a single pickup. Please choose a delivery option instead.', 'erpnext-shipping' ), 'error' );
+        } elseif ( empty( $location_id ) ) {
             wc_add_notice( __( 'Please select a pickup location.', 'erpnext-shipping' ), 'error' );
         } elseif ( ! self::is_valid_pickup_location( $location_id ) ) {
             wc_add_notice( __( 'Invalid pickup location selected.', 'erpnext-shipping' ), 'error' );
+        } elseif ( ! in_array( $location_id, $feasible_ids, true ) ) {
+            wc_add_notice( __( 'Some items in your cart aren’t stocked at the selected pickup location and would need to be transferred. Please choose a different pickup location or a delivery option.', 'erpnext-shipping' ), 'error' );
         }
+    }
+
+    /**
+     * The SLW term IDs of the warehouses that SUPPLY a given pickup location.
+     *
+     * - warehouse        → its own slw_term_id
+     * - collection_point → the slw_term_id of each warehouse in its serviced_by list
+     *                      (empty serviced_by → no terms → cannot fulfil → blocked,
+     *                       per the "block until configured" policy)
+     *
+     * @param array $loc           The pickup location record.
+     * @param array $all_locations All configured locations.
+     * @return int[] Warehouse term IDs.
+     */
+    private static function get_pickup_source_terms( $loc, $all_locations ) {
+        $type = $loc['type'] ?? 'warehouse';
+
+        if ( 'collection_point' !== $type ) {
+            $term = intval( $loc['slw_term_id'] ?? 0 );
+            return $term > 0 ? array( $term ) : array();
+        }
+
+        $serviced = $loc['serviced_by'] ?? array();
+        if ( empty( $serviced ) || ! is_array( $serviced ) ) {
+            return array(); // not yet configured — block.
+        }
+
+        $by_id = array();
+        foreach ( $all_locations as $l ) {
+            $by_id[ $l['id'] ?? '' ] = $l;
+        }
+
+        $terms = array();
+        foreach ( $serviced as $wid ) {
+            $w = $by_id[ $wid ] ?? null;
+            if ( $w ) {
+                $term = intval( $w['slw_term_id'] ?? 0 );
+                if ( $term > 0 ) {
+                    $terms[] = $term;
+                }
+            }
+        }
+        return array_values( array_unique( $terms ) );
+    }
+
+    /**
+     * Can the current cart be collected at this pickup location WITHOUT a
+     * cross-branch transfer? True only if every warehoused item has enough
+     * stock at one of the location's supplying warehouses.
+     *
+     * Items with no per-location stock data (fees, services) are ignored.
+     *
+     * @param array $loc           The pickup location record.
+     * @param array $all_locations All configured locations.
+     * @return bool
+     */
+    private static function cart_collectable_at( $loc, $all_locations ) {
+        $type  = $loc['type'] ?? 'warehouse';
+        $terms = self::get_pickup_source_terms( $loc, $all_locations );
+
+        if ( empty( $terms ) ) {
+            // Collection point with no serviced_by → block until configured (policy).
+            // Warehouse with no SLW term → can't assess stock, so don't change
+            // existing behaviour: allow pickup.
+            return ( 'collection_point' !== $type );
+        }
+
+        if ( ! WC()->cart ) {
+            return true;
+        }
+
+        foreach ( WC()->cart->get_cart() as $item ) {
+            $pid = ! empty( $item['variation_id'] ) ? $item['variation_id'] : $item['product_id'];
+            $qty = intval( $item['quantity'] );
+
+            // Non-warehoused item (no per-location stock data) → ignore.
+            if ( ! self::product_has_location_stock( $pid ) ) {
+                continue;
+            }
+
+            $available = 0;
+            foreach ( $terms as $term ) {
+                $available += intval( get_post_meta( $pid, '_stock_at_' . $term, true ) );
+            }
+            if ( $available < $qty ) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether a product carries any `_stock_at_<term>` meta for a configured
+     * warehouse term (i.e. it is a warehoused/ERPNext-synced product).
+     *
+     * @param int $pid Product or variation ID.
+     * @return bool
+     */
+    private static function product_has_location_stock( $pid ) {
+        foreach ( self::all_warehouse_terms() as $term ) {
+            if ( metadata_exists( 'post', $pid, '_stock_at_' . $term ) ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * All warehouse-type location term IDs.
+     *
+     * @return int[]
+     */
+    private static function all_warehouse_terms() {
+        $locations = get_option( 'es_shipping_locations', array() );
+        $terms     = array();
+        foreach ( $locations as $loc ) {
+            if ( ( $loc['type'] ?? 'warehouse' ) !== 'collection_point' ) {
+                $term = intval( $loc['slw_term_id'] ?? 0 );
+                if ( $term > 0 ) {
+                    $terms[] = $term;
+                }
+            }
+        }
+        return array_values( array_unique( $terms ) );
     }
 
     /**
@@ -270,6 +423,7 @@ class ES_Fulfillment_Checkout {
         .es-pickup-select { width: 100%; max-width: 350px; }
         .es-pickup-details { margin-top: 6px; padding: 8px 12px; background: #f8f8f8; border-left: 3px solid #7ad03a; font-size: 13px; }
         .es-pickup-message { color: #666; font-style: italic; margin-top: 4px; }
+        .es-pickup-unavailable { margin-top: 6px; padding: 10px 14px; background: #fcf0f1; border-left: 4px solid #d63638; color: #8a1f21; font-size: 13px; font-weight: 600; border-radius: 2px; }
         </style>
         <?php
     }

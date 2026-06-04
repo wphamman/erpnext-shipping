@@ -39,7 +39,7 @@ Locations are stored as a JSON array in the WP option `es_shipping_locations`. E
 
 **Location types:**
 - `warehouse` — ships orders, needs ERPNext warehouse mapping, optionally available for pickup
-- `collection_point` — pickup only, no warehouse mapping needed, always pickup-enabled, excluded from rate calculations and stock sync
+- `collection_point` — pickup only, no warehouse mapping needed, always pickup-enabled, excluded from rate calculations and stock sync. Optional `serviced_by` (array of warehouse location IDs) declares which warehouse(s) supply this point; used by the checkout pickup feasibility gate. If empty, the point offers no pickup until configured.
 
 Locations are referenced by `id` throughout the codebase (not by hardcoded keys like `cpt`/`pta`).
 

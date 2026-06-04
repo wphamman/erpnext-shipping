@@ -86,6 +86,23 @@ class ES_Admin_Page {
         $locations_raw  = json_decode( $locations_json, true );
         $locations      = array();
 
+        // Pre-pass: collect the IDs of submitted warehouse locations so collection-point
+        // serviced_by lists can be whitelisted to real warehouses (reject forged IDs).
+        $warehouse_ids = array();
+        if ( is_array( $locations_raw ) ) {
+            foreach ( $locations_raw as $loc ) {
+                $lt = sanitize_text_field( $loc['type'] ?? 'warehouse' );
+                if ( 'collection_point' === $lt ) {
+                    continue;
+                }
+                $nm = sanitize_text_field( $loc['name'] ?? '' );
+                if ( '' === $nm ) {
+                    continue;
+                }
+                $warehouse_ids[] = ! empty( $loc['id'] ) ? sanitize_title( $loc['id'] ) : sanitize_title( $nm );
+            }
+        }
+
         if ( is_array( $locations_raw ) ) {
             foreach ( $locations_raw as $loc ) {
                 $name = sanitize_text_field( $loc['name'] ?? '' );
@@ -125,6 +142,9 @@ class ES_Admin_Page {
                     'erp_warehouses' => $erp_warehouses,
                     'slw_term_id'    => intval( $loc['slw_term_id'] ?? 0 ),
                     'pickup_enabled'   => 'collection_point' === $loc_type ? true : ! empty( $loc['pickup_enabled'] ),
+                    'serviced_by'      => ( 'collection_point' === $loc_type && isset( $loc['serviced_by'] ) && is_array( $loc['serviced_by'] ) )
+                        ? array_values( array_intersect( array_map( 'sanitize_title', $loc['serviced_by'] ), $warehouse_ids ) )
+                        : array(),
                     'customer_message' => sanitize_textarea_field( $loc['customer_message'] ?? '' ),
                 );
             }
@@ -693,6 +713,24 @@ class ES_Admin_Page {
                     var whText = (loc.erp_warehouses || []).join('\n');
                     var locType = loc.type || 'warehouse';
                     var isCP = locType === 'collection_point';
+
+                    // "Serviced by" warehouse checkboxes (collection points only).
+                    var whOptions = locations.filter(function(l){ return (l.type || 'warehouse') !== 'collection_point' && (l.name || '').trim(); });
+                    var servBy = loc.serviced_by || [];
+                    var cpInner = '';
+                    if (whOptions.length) {
+                        whOptions.forEach(function(w){
+                            var wid = w.id || '';
+                            var checked = (wid && servBy.indexOf(wid) !== -1) ? ' checked' : '';
+                            cpInner += '<label style="display:flex; align-items:center; gap:6px; font-weight:normal; margin:2px 0;"><input type="checkbox" class="es-cp-serviced" value="' + escAttr(wid) + '"' + checked + (wid ? '' : ' disabled') + ' style="width:auto; flex:0 0 auto; margin:0;"> ' + escAttr(w.name) + (wid ? '' : ' (save first)') + '</label>';
+                        });
+                    } else {
+                        cpInner = '<p class="description">Add and save a Warehouse location first, then map it here.</p>';
+                    }
+                    var cpFields = '<div class="es-full-width es-cp-fields" style="' + (isCP ? '' : 'display:none;') + '">' +
+                        '<label>Serviced by warehouse(s)</label>' + cpInner +
+                        '<p class="description" style="margin-top:4px; color:#d63638;">Pickup here is offered only for orders fully stocked at the ticked warehouse(s). Leave empty to disable pickup at this point until configured.</p></div>';
+
                     var card = '<div class="es-location-card" data-index="' + idx + '">' +
                         '<h3>' +
                             '<input type="text" class="es-loc-name regular-text" value="' + escAttr(loc.name || '') + '" placeholder="Location name (e.g. Cape Town Warehouse)">' +
@@ -731,6 +769,7 @@ class ES_Admin_Page {
                                 return hint;
                             })() +
                             '</div>' +
+                            cpFields +
                             '<div class="es-full-width"><label>Customer Message (optional)</label><textarea class="es-loc-customer-msg" rows="2" placeholder="e.g. Allow 5 business days for delivery to this location">' + escAttr(loc.customer_message || '') + '</textarea>' +
                             '<p class="description" style="margin-top:4px;">Shown at checkout when this location is selected for pickup, and in the Ready for Pickup email.</p></div>' +
                         '</div>' +
@@ -764,6 +803,9 @@ class ES_Admin_Page {
                         // migration fallback maps old pickup orders via this field.
                         slw_term_id: parseInt($card.find('.es-loc-slw-term').val()) || (locations[idx] && locations[idx].slw_term_id) || 0,
                         pickup_enabled: locType === 'collection_point' ? true : $card.find('.es-pickup-enabled').is(':checked'),
+                        serviced_by: locType === 'collection_point'
+                            ? $card.find('.es-cp-serviced:checked').map(function(){ return $(this).val(); }).get()
+                            : [],
                         customer_message: $card.find('.es-loc-customer-msg').val().trim(),
                     });
                 });
@@ -781,6 +823,7 @@ class ES_Admin_Page {
                 var $card = $(this).closest('.es-location-card');
                 var isCP = $(this).val() === 'collection_point';
                 $card.find('.es-warehouse-fields').toggle(!isCP);
+                $card.find('.es-cp-fields').toggle(isCP);
                 $card.find('.es-pickup-enabled').prop('checked', isCP || $card.find('.es-pickup-enabled').is(':checked')).prop('disabled', isCP);
             });
 
