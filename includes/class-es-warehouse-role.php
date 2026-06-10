@@ -209,6 +209,22 @@ class ES_Warehouse_Role {
     }
 
     /**
+     * Deny the WooCommerce REST API (wc/v3 etc.) to warehouse staff.
+     *
+     * The role carries `manage_woocommerce` only because WC requires it for
+     * admin-screen access; menu/page restrictions don't apply to REST, which
+     * would otherwise hand warehouse users the full WC API (products, coupons,
+     * settings, all customer data). Warehouse staff have no REST use case —
+     * the plugin's own tracking REST endpoints accept WC API keys instead.
+     */
+    public static function restrict_rest_api( $permission ) {
+        if ( $permission && self::is_warehouse_user() ) {
+            return false;
+        }
+        return $permission;
+    }
+
+    /**
      * Hook all restrictions.
      */
     public static function init() {
@@ -216,5 +232,6 @@ class ES_Warehouse_Role {
         add_action( 'admin_init', array( __CLASS__, 'restrict_admin_pages' ) );
         add_filter( 'login_redirect', array( __CLASS__, 'login_redirect' ), 10, 3 );
         add_filter( 'show_admin_bar', array( __CLASS__, 'maybe_hide_admin_bar' ) );
+        add_filter( 'woocommerce_rest_check_permissions', array( __CLASS__, 'restrict_rest_api' ), 999 );
     }
 }

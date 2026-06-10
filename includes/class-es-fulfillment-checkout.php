@@ -265,7 +265,9 @@ class ES_Fulfillment_Checkout {
 
         foreach ( WC()->cart->get_cart() as $item ) {
             $pid = ! empty( $item['variation_id'] ) ? $item['variation_id'] : $item['product_id'];
-            $qty = intval( $item['quantity'] );
+            // Quantities and synced stock can be fractional (per-kg products) —
+            // intval() previously truncated 0.9 stock to 0 and falsely blocked pickup.
+            $qty = floatval( $item['quantity'] );
 
             // Non-warehoused item (no per-location stock data) → ignore.
             if ( ! self::product_has_location_stock( $pid ) ) {
@@ -274,9 +276,11 @@ class ES_Fulfillment_Checkout {
 
             $available = 0;
             foreach ( $terms as $term ) {
-                $available += intval( get_post_meta( $pid, '_stock_at_' . $term, true ) );
+                $available += floatval( get_post_meta( $pid, '_stock_at_' . $term, true ) );
             }
-            if ( $available < $qty ) {
+            // Small epsilon guards against float summation noise blocking a
+            // pickup that is exactly in stock (e.g. 0.1 + 0.2 vs 0.3).
+            if ( $available + 0.001 < $qty ) {
                 return false;
             }
         }

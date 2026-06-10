@@ -123,29 +123,82 @@ class ES_Fulfillment_Watchdog {
 
     /**
      * Get orders stuck in a status since before the cutoff date.
-     * Uses date_modified (updated on status changes) rather than date_created
-     * to avoid false positives for orders that recently changed status.
+     *
+     * Staleness keys on `_es_status_changed_at` (stamped on every status
+     * transition since v1.12.8). date_modified is unusable for this: the
+     * 15-minute tracking poll saves orders on every run, so the modified date
+     * never aged past the threshold and these alerts could never fire.
+     * Legacy orders without the meta fall back to date_modified.
      */
     private static function get_stale_orders( $status, $cutoff, $days = 3 ) {
-        $orders = wc_get_orders( array(
+        $cutoff_ts = time() - ( absint( $days ) * DAY_IN_SECONDS );
+
+        // Two targeted queries instead of fetch-and-filter (a bounded fetch
+        // could hide stale orders behind non-stale ones in large statuses):
+        // (1) orders whose recorded status-entry time is older than the cutoff;
+        // (2) legacy orders without the meta, using the old date_modified rule.
+        $stale = wc_get_orders( array(
+            'status'     => $status,
+            'limit'      => 50,
+            'orderby'    => 'date',
+            'order'      => 'ASC',
+            'meta_query' => array(
+                array(
+                    'key'     => '_es_status_changed_at',
+                    'value'   => $cutoff_ts,
+                    'compare' => '<',
+                    'type'    => 'NUMERIC',
+                ),
+            ),
+        ) );
+
+        $legacy = wc_get_orders( array(
             'status'        => $status,
-            'date_modified' => '<' . $cutoff,
             'limit'         => 50,
             'orderby'       => 'date',
             'order'         => 'ASC',
+            'date_modified' => '<' . gmdate( 'Y-m-d H:i:s', $cutoff_ts ),
+            'meta_query'    => array(
+                array(
+                    'key'     => '_es_status_changed_at',
+                    'compare' => 'NOT EXISTS',
+                ),
+            ),
         ) );
 
         $result = array();
-        foreach ( $orders as $order ) {
-            $result[] = array(
-                'id'      => $order->get_id(),
+        $seen   = array();
+        foreach ( array_merge( $stale, $legacy ) as $order ) {
+            $id = $order->get_id();
+            if ( isset( $seen[ $id ] ) ) {
+                continue;
+            }
+            $seen[ $id ] = true;
+            $result[]    = array(
+                'id'      => $id,
                 'number'  => $order->get_order_number(),
                 'date'    => $order->get_date_created() ? $order->get_date_created()->date( 'Y-m-d' ) : '',
                 'total'   => $order->get_total(),
                 'name'    => $order->get_formatted_billing_full_name(),
             );
+            if ( count( $result ) >= 50 ) {
+                break;
+            }
         }
         return $result;
+    }
+
+    /**
+     * Whether the order entered its current status before the given timestamp.
+     * Falls back to date_modified for orders predating `_es_status_changed_at`.
+     */
+    private static function entered_status_before( $order, $cutoff_ts ) {
+        $entered = absint( $order->get_meta( '_es_status_changed_at', true ) );
+        if ( $entered > 0 ) {
+            return $entered < $cutoff_ts;
+        }
+        $modified = $order->get_date_modified();
+        return $modified && $modified->getTimestamp() < $cutoff_ts;
     }
 
     /**
@@ -244,8 +297,7 @@ class ES_Fulfillment_Watchdog {
         $reminder_email = $wc_emails['ES_Email_Pickup_Reminder'];
 
         // Reminder 1: orders in ready-pickup for >= $days_1 days, not yet reminded.
-        $cutoff_1 = gmdate( 'Y-m-d H:i:s', strtotime( "-{$days_1} days" ) );
-        $orders_1 = self::get_ready_pickup_orders( $cutoff_1, 0 );
+        $orders_1 = self::get_ready_pickup_orders( $days_1, 0 );
 
         foreach ( $orders_1 as $order ) {
             $reminder_email->trigger( $order->get_id(), $order, 1 );
@@ -255,8 +307,7 @@ class ES_Fulfillment_Watchdog {
         }
 
         // Reminder 2: orders in ready-pickup for >= $days_2 days, only first reminder sent.
-        $cutoff_2 = gmdate( 'Y-m-d H:i:s', strtotime( "-{$days_2} days" ) );
-        $orders_2 = self::get_ready_pickup_orders( $cutoff_2, 1 );
+        $orders_2 = self::get_ready_pickup_orders( $days_2, 1 );
 
         foreach ( $orders_2 as $order ) {
             $reminder_email->trigger( $order->get_id(), $order, 2 );
@@ -267,9 +318,13 @@ class ES_Fulfillment_Watchdog {
     }
 
     /**
-     * Get orders in ready-pickup status, created before cutoff, with specific reminder level.
+     * Get orders that entered ready-pickup at least $days ago, with specific
+     * reminder level. Timing keys on `_es_status_changed_at` (see
+     * get_stale_orders) — previously the reminder-1 save bumped date_modified,
+     * which restarted the clock and pushed reminder 2 out by its full window.
      */
-    private static function get_ready_pickup_orders( $cutoff, $reminder_level ) {
+    private static function get_ready_pickup_orders( $days, $reminder_level ) {
+        $cutoff_ts  = time() - ( absint( $days ) * DAY_IN_SECONDS );
         $meta_query = array(
             'relation' => 'AND',
         );
@@ -296,12 +351,15 @@ class ES_Fulfillment_Watchdog {
             );
         }
 
-        return wc_get_orders( array(
-            'status'        => 'ready-pickup',
-            'date_modified' => '<' . $cutoff,
-            'meta_query'    => $meta_query,
-            'limit'         => 50,
+        $orders = wc_get_orders( array(
+            'status'     => 'ready-pickup',
+            'meta_query' => $meta_query,
+            'limit'      => 100,
         ) );
+
+        return array_filter( $orders, function ( $order ) use ( $cutoff_ts ) {
+            return self::entered_status_before( $order, $cutoff_ts );
+        } );
     }
 
     /**

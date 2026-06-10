@@ -71,6 +71,23 @@ class ES_Stock_Sync {
     public $last_error = '';
 
     public function sync() {
+        // Mutex: the cron run, manual "Sync Now", and AJAX can overlap (a full
+        // sync can outlast the 15-min interval on slow ERP responses), racing
+        // the prev-stock diff in sync_to_slw with spurious deplete/restore
+        // writes. One sync at a time; the lock self-expires as a crash guard.
+        if ( get_transient( 'es_stock_sync_lock' ) ) {
+            $this->last_error = 'Another stock sync is already running.';
+            return false;
+        }
+        set_transient( 'es_stock_sync_lock', time(), 10 * MINUTE_IN_SECONDS );
+        try {
+            return $this->do_sync();
+        } finally {
+            delete_transient( 'es_stock_sync_lock' );
+        }
+    }
+
+    private function do_sync() {
         if ( empty( $this->erp_url ) || empty( $this->erp_key ) ) {
             $this->last_error = 'ERPNext URL or API Key is empty.';
             return false;
@@ -205,10 +222,12 @@ class ES_Stock_Sync {
             // Assign location terms to this product.
             wp_set_object_terms( $product_id, $term_ids, 'location', false );
 
-            // Write per-location stock quantities.
+            // Write per-location stock quantities. ERP stock can be fractional
+            // (per-kg items) — intval() previously truncated 0.9 to 0, falsely
+            // zeroing location stock and blocking the pickup feasibility gate.
             $total_qty = 0;
             foreach ( $map as $loc_id => $term_id ) {
-                $qty = intval( $location_qtys[ $loc_id ] ?? 0 );
+                $qty = floatval( $location_qtys[ $loc_id ] ?? 0 );
                 update_post_meta( $product_id, '_stock_at_' . $term_id, $qty );
                 $total_qty += $qty;
             }
@@ -217,7 +236,7 @@ class ES_Stock_Sync {
             // This is the inverse of the depletion path below.
             $product = wc_get_product( $product_id );
             if ( $product && $product->managing_stock() && $total_qty > 0 ) {
-                $current_stock = (int) $product->get_stock_quantity();
+                $current_stock = (float) $product->get_stock_quantity();
                 if ( $current_stock <= 0 || 'outofstock' === $product->get_stock_status() ) {
                     wc_update_product_stock( $product_id, $total_qty );
                     $product->set_stock_status( 'instock' );

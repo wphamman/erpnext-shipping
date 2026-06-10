@@ -54,6 +54,63 @@ class ES_Fulfillment_Statuses {
 
         // Admin CSS for status colors.
         add_action( 'admin_head', array( __CLASS__, 'admin_status_css' ) );
+
+        // Safety net for ALL status-change paths (bulk actions, order-edit
+        // dropdown, third-party code): pickup statuses without a pickup
+        // location are reverted. NOTE on ordering: WC fires the per-status
+        // `woocommerce_order_status_{to}` actions (where our pickup emails
+        // hook) BEFORE `woocommerce_order_status_changed` — that is safe here
+        // because every pickup email's trigger() independently bails when no
+        // pickup location resolves (the same condition this guard checks), so
+        // nothing is sent before the revert. If that email-side bail is ever
+        // removed, this hook must move to the per-status actions instead.
+        add_action( 'woocommerce_order_status_changed', array( __CLASS__, 'enforce_pickup_location' ), 4, 4 );
+
+        // Record when an order entered its current status. The watchdog keys
+        // staleness on this instead of date_modified, which every routine save
+        // (e.g. the 15-min tracking poll) bumps — that previously meant the
+        // ">N days in status" alerts and pickup reminders could never fire.
+        add_action( 'woocommerce_order_status_changed', array( __CLASS__, 'record_status_change' ), 5, 4 );
+    }
+
+    /**
+     * Revert pickup-flow status changes made without a pickup location set.
+     * The quick actions pre-check this with a friendly redirect; this guard
+     * catches bulk actions and the order-edit dropdown, where the pickup email
+     * would otherwise silently bail and the customer would never be notified.
+     */
+    public static function enforce_pickup_location( $order_id, $from, $to, $order ) {
+        static $reverting = false;
+        if ( $reverting || ! $order instanceof WC_Order ) {
+            return;
+        }
+        if ( ! in_array( $to, array( 'dispatched-pickup', 'ready-pickup', 'pickup' ), true ) ) {
+            return;
+        }
+        if ( self::resolve_pickup_location( $order ) ) {
+            return;
+        }
+        $reverting = true;
+        $order->update_status(
+            $from,
+            sprintf(
+                /* translators: %s: attempted status */
+                __( 'Status change to "%s" blocked: no pickup location set on this order. Set the pickup location first.', 'erpnext-shipping' ),
+                $to
+            )
+        );
+        $reverting = false;
+    }
+
+    /**
+     * Stamp the time the order entered its current status.
+     */
+    public static function record_status_change( $order_id, $from, $to, $order ) {
+        if ( ! $order instanceof WC_Order ) {
+            return;
+        }
+        $order->update_meta_data( '_es_status_changed_at', time() );
+        $order->save();
     }
 
     public static function register_statuses() {

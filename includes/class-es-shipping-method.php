@@ -660,11 +660,13 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             }
 
             // Query carriers.
-            $rates = array();
+            $rates   = array();
+            $partial = false; // true if any carrier was skipped (budget) or errored.
             foreach ( $carriers as $carrier ) {
                 $elapsed = microtime( true ) - $start_time;
                 if ( $elapsed > $time_budget ) {
                     $this->log( 'Time budget exceeded before ' . $carrier->get_carrier_name() . ', skipping.' );
+                    $partial = true;
                     break;
                 }
 
@@ -675,14 +677,30 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                         $this->log( $carrier->get_carrier_name() . ' returned ' . count( $carrier_rates ) . ' rates for ' . $lq['location'] . ' in ' . round( microtime( true ) - $start_time, 1 ) . 's' );
                     } else {
                         $this->log( $carrier->get_carrier_name() . ' returned no rates for ' . $lq['location'] );
+                        $partial = true; // carrier failed/empty — likely transient, don't pin it.
                     }
                 } catch ( \Throwable $e ) {
                     $this->log( $carrier->get_carrier_name() . ' error: ' . $e->getMessage() );
+                    $partial = true;
                 }
             }
 
-            $cache->set( $cache_key, $rates );
+            // Only cache complete, non-empty result sets. Caching an empty/partial
+            // result (carrier timeout, budget break) used to pin "no rates" for the
+            // full cache TTL for every customer sharing this key.
+            if ( ! empty( $rates ) && ! $partial ) {
+                $cache->set( $cache_key, $rates );
+            }
             $location_rates[ $lq['location'] ] = $rates;
+        }
+
+        // A location skipped entirely by the time budget must still count as
+        // "no rates" — for split plans a missing key would otherwise sum only
+        // the quoted legs and present the partial total as the full charge.
+        foreach ( $locations_to_quote as $lq ) {
+            if ( ! isset( $location_rates[ $lq['location'] ] ) ) {
+                $location_rates[ $lq['location'] ] = array();
+            }
         }
 
         // 7. Combine rates.
@@ -757,8 +775,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             return false;
         }
 
-        $origin      = $this->get_bulk_delivery_origin( $plan );
-        $distance_km = $this->resolve_bulk_delivery_distance_km( $origin, $destination );
+        $distance_km = $this->resolve_nearest_bulk_delivery_distance_km( $plan, $destination );
         if ( $distance_km <= 0 ) {
             $this->log( 'Own vehicle delivery skipped: distance unknown.' );
             return false;
@@ -1031,6 +1048,49 @@ class ES_Shipping_Method extends WC_Shipping_Method {
     private function is_bulk_delivery_quote_value( $raw ) {
         $value = strtolower( trim( (string) $raw ) );
         return in_array( $value, array( 'quote', 'manual', 'manual quote', 'quote required', 'manual_quote' ), true );
+    }
+
+    /**
+     * Resolve the own-vehicle distance using the NEAREST candidate dispatch
+     * location in the plan. Previously the first configured location was used
+     * for chooseable/split plans, which could price a customer from the wrong
+     * province (wrong band, or "quote" instead of a deliverable rate).
+     *
+     * @param array $plan        Fulfillment plan.
+     * @param array $destination Destination address.
+     * @return float Distance in km (0 when unresolvable).
+     */
+    private function resolve_nearest_bulk_delivery_distance_km( $plan, $destination ) {
+        $candidates = array();
+        if ( isset( $plan['type'] ) && 'single' === $plan['type'] ) {
+            $candidates[] = $plan['location'] ?? '';
+        } elseif ( isset( $plan['type'] ) && 'chooseable' === $plan['type'] && ! empty( $plan['locations'] ) ) {
+            $candidates = (array) $plan['locations'];
+        } elseif ( isset( $plan['type'] ) && 'split' === $plan['type'] && ! empty( $plan['shipments'] ) ) {
+            $candidates = array_keys( $plan['shipments'] );
+        }
+        $candidates = array_filter( array_unique( $candidates ) );
+
+        if ( empty( $candidates ) ) {
+            $locations = self::get_locations();
+            if ( ! empty( $locations ) ) {
+                $first        = reset( $locations );
+                $candidates[] = $first['id'] ?? '';
+            }
+        }
+
+        $best = 0;
+        foreach ( $candidates as $loc_id ) {
+            if ( ! $loc_id ) {
+                continue;
+            }
+            $km = $this->resolve_bulk_delivery_distance_km( $this->get_origin( $loc_id ), $destination );
+            if ( $km > 0 && ( $best <= 0 || $km < $best ) ) {
+                $best = $km;
+            }
+        }
+
+        return $best;
     }
 
     /**

@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.8] - 2026-06-10
+
+### Fixed
+- **"Delivery Quote Required" rate silently removed when free shipping was present.** The smart free-shipping logic hides the cheapest carrier rate, excluding rates ending `_locker` and `_bulk_delivery` — but the manual-quote rate id ends `_bulk_delivery_quote` (matched neither) and costs 0, so it was always removed as "cheapest". Customers over the quote-distance band with a free-shipping-qualifying cart could check out with free courier shipping instead of a delivery quote. All `_bulk_delivery*` rates are now excluded from the cheapest-rate cleanup.
+- **Empty/partial carrier results were cached for the full TTL.** A carrier timeout or the 20s time-budget break cached an empty or one-carrier rate set, pinning "no rates" (or undercharged split rates) for every customer sharing the cache key for 15 minutes. Only complete, non-empty result sets are cached now.
+- **Fractional quantities truncated throughout.** Per-kg products (sold in 0.01 steps) were `intval()`ed in the parcel estimator (0.25 kg billed as a full unit), the ERP stock sync (0.9 stock stored as 0), and the pickup feasibility gate (false "not available for pickup" blocks). All three now handle float quantities; the pickup check uses an epsilon to avoid float-noise blocks.
+
+- **Own-vehicle delivery priced from the wrong warehouse.** For chooseable/split fulfillment plans the distance was computed from the *first configured* location — a customer near Warehouse B could be priced (or pushed into the manual-quote band) from Warehouse A's distance. The distance now uses the nearest candidate location in the plan.
+- **Split orders could present a partial total as the full charge.** A dispatch location skipped entirely by the 20s time budget was missing from the rate map, so split combination summed only the quoted legs. Skipped locations now count as "no rates", which suppresses the combined split rate (fallback applies) instead of undercharging.
+- **Heavy-class free-shipping exclusion failed open.** The exclusion list was only read from an ES rate present in the package; when carriers returned nothing (and no fallback rate was configured), WC's Free Shipping survived on carts containing excluded shipping classes. Settings are now read from the configured instance directly when no ES rate is present.
+- **Watchdog stale-order alerts and pickup reminders could never fire.** Staleness was keyed on `date_modified`, which the 15-minute tracking poll bumps on every run. Orders now stamp `_es_status_changed_at` on every status transition and the watchdog/reminders key on that (legacy orders fall back to `date_modified`). Reminder 2 timing no longer restarts when reminder 1 saves the order.
+- **Stale quick-action links could drag orders out of final statuses.** Status quick actions (nonces valid ~24h in list-page URLs) now refuse to act on orders in `delivered`/`pickup`/`refunded`/`cancelled`/`failed` — deliberate changes still work from the order edit screen.
+- **Pickup-location guard now covers ALL status-change paths.** Bulk actions and the order-edit dropdown bypassed the quick-action check, putting orders into pickup statuses with no location — the pickup email then silently bailed and the customer was never notified. A `woocommerce_order_status_changed` safety net (runs before email hooks) reverts such changes with an explanatory order note.
+- **Stock sync can no longer run concurrently.** Cron, manual "Sync Now", and AJAX syncs could overlap (a slow ERP response can outlast the 15-min interval), racing the previous-stock diff into spurious SLW deplete/restore writes. `sync()` now takes a 10-minute self-expiring mutex.
+
+### Security
+- **Warehouse Staff can no longer use the WooCommerce REST API.** The role carries `manage_woocommerce` (required for WC admin screens), and menu/page restrictions don't apply to REST — so warehouse logins implicitly had the full `wc/v3` surface (products, coupons, settings, customer data). A `woocommerce_rest_check_permissions` filter now denies REST for warehouse users; the plugin's own tracking REST endpoints (used by integrations) accept WC API keys and are unaffected.
+
 ## [1.12.7] - 2026-06-04
 
 ### Fixed

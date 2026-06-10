@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.12.7
+ * Version: 1.12.8
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Requires at least: 6.0
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.12.7' );
+define( 'ES_SHIPPING_VERSION', '1.12.8' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // Declare HPOS (High-Performance Order Storage) compatibility. The plugin already
@@ -174,12 +174,39 @@ add_filter( 'woocommerce_package_rates', function ( $rates, $package ) {
     // Read plugin settings from the first ES instance found in rates.
     $free_source      = 'wc_method';
     $excluded_classes = array();
+    $instance_found   = false;
     foreach ( $rates as $rate ) {
         if ( 'erpnext_shipping' === $rate->method_id ) {
+            $instance_found = true;
             $instance_id = $rate->instance_id;
             $opts = get_option( 'woocommerce_erpnext_shipping_' . $instance_id . '_settings', array() );
             $free_source = $opts['free_shipping_source'] ?? 'wc_method';
             // Parse comma-separated shipping class slugs.
+            $raw = trim( $opts['no_free_shipping_classes'] ?? '' );
+            if ( $raw !== '' ) {
+                $excluded_classes = array_map( 'trim', explode( ',', $raw ) );
+            }
+            break;
+        }
+    }
+
+    // No ES rate present (carriers down, empty result, fallback disabled): the
+    // heavy-class free-shipping exclusion must NOT fail open. Read the settings
+    // straight from the first configured instance instead.
+    if ( ! $instance_found ) {
+        global $wpdb;
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT option_value FROM {$wpdb->options} WHERE option_name LIKE %s",
+                'woocommerce_erpnext_shipping_%_settings'
+            )
+        );
+        foreach ( (array) $rows as $row ) {
+            $opts = maybe_unserialize( $row->option_value );
+            if ( ! is_array( $opts ) || ( ! isset( $opts['free_shipping_source'] ) && ! isset( $opts['no_free_shipping_classes'] ) ) ) {
+                continue;
+            }
+            $free_source = $opts['free_shipping_source'] ?? 'wc_method';
             $raw = trim( $opts['no_free_shipping_classes'] ?? '' );
             if ( $raw !== '' ) {
                 $excluded_classes = array_map( 'trim', explode( ',', $raw ) );
@@ -291,10 +318,12 @@ add_filter( 'woocommerce_package_rates', function ( $rates, $package ) {
         return $rates;
     }
 
-    // Find all carrier rates (excluding free and locker — locker kept for future support).
+    // Find all carrier rates (excluding free, locker, and ALL own-vehicle/bulk-delivery
+    // rates — including the zero-cost `_bulk_delivery_quote` rate, which previously
+    // matched neither suffix check and, costing 0, was always removed as "cheapest").
     $carrier_rates = array();
     foreach ( $rates as $rate_id => $rate ) {
-        if ( 'erpnext_shipping' === $rate->method_id && ! $is_free_rate( $rate_id, $rate ) && substr( $rate_id, -7 ) !== '_locker' && substr( $rate_id, -14 ) !== '_bulk_delivery' ) {
+        if ( 'erpnext_shipping' === $rate->method_id && ! $is_free_rate( $rate_id, $rate ) && substr( $rate_id, -7 ) !== '_locker' && false === strpos( $rate_id, '_bulk_delivery' ) ) {
             $carrier_rates[ $rate_id ] = $rate;
         }
     }

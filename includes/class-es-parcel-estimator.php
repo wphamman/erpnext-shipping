@@ -30,7 +30,9 @@ class ES_Parcel_Estimator {
         $max_height   = 0;
 
         foreach ( $items as $item ) {
-            $qty    = max( 1, intval( $item['qty'] ) );
+            // Quantities can be fractional (per-kg products sold in 0.01 steps) —
+            // intval() here previously billed 0.25 kg as a full unit and 2.9 as 2.
+            $qty    = max( 0.01, floatval( $item['qty'] ) );
             $weight = ( $item['weight'] > 0 ) ? $item['weight'] : $this->default_weight;
             $length = ( $item['length'] > 0 ) ? $item['length'] : $this->default_length;
             $width  = ( $item['width'] > 0 )  ? $item['width']  : $this->default_width;

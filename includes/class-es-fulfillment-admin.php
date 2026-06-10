@@ -497,6 +497,15 @@ class ES_Fulfillment_Admin {
             wp_die( 'Invalid status.' );
         }
 
+        // Quick-action nonces live in list-page URLs for ~24h; a stale/replayed
+        // link must not drag an order out of a terminal state (e.g. delivered →
+        // completed re-fires the customer "Shipped" email). Deliberate changes
+        // can still be made from the order edit screen.
+        $terminal = array( 'delivered', 'pickup', 'refunded', 'cancelled', 'failed' );
+        if ( in_array( $order->get_status(), $terminal, true ) ) {
+            wp_die( 'Order is in a final status (' . esc_html( $order->get_status() ) . '). Use the order edit screen if this change is intentional.' );
+        }
+
         // Block pickup status changes if no pickup location is set — the email
         // class silently bails without a location, leaving the customer uninformed.
         if ( in_array( $new_status, array( 'dispatched-pickup', 'ready-pickup', 'pickup' ), true ) ) {
