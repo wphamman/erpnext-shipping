@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.12.8
+ * Version: 1.12.9
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Requires at least: 6.0
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.12.8' );
+define( 'ES_SHIPPING_VERSION', '1.12.9' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // Declare HPOS (High-Performance Order Storage) compatibility. The plugin already
@@ -99,10 +99,17 @@ function es_fulfillment_init() {
         require_once ES_SHIPPING_PATH . 'includes/class-es-order-assignment.php';
 
         // v1.12.0: cross-system admin UX + diagnostics. Depend on tracking + cron.
+        require_once ES_SHIPPING_PATH . 'includes/class-es-erpnext-client.php';
+        require_once ES_SHIPPING_PATH . 'includes/class-es-quote-log.php';
+        require_once ES_SHIPPING_PATH . 'includes/class-es-order-actions.php';
+
+        // v1.12.9: the force-sync now runs as an async Action Scheduler job so it
+        // can't hit the 30s PHP time limit. Its callback must be registered in ALL
+        // contexts — Action Scheduler runs the queue from cron/loopback where
+        // is_admin() is false — so register it here, outside the admin gate.
+        add_action( 'es_force_sync_job', array( 'ES_Order_Actions', 'run_force_sync_job' ), 10, 1 );
+
         if ( is_admin() ) {
-            require_once ES_SHIPPING_PATH . 'includes/class-es-erpnext-client.php';
-            require_once ES_SHIPPING_PATH . 'includes/class-es-quote-log.php';
-            require_once ES_SHIPPING_PATH . 'includes/class-es-order-actions.php';
             require_once ES_SHIPPING_PATH . 'includes/class-es-diagnostics-page.php';
             ES_Order_Actions::init();
             ES_Diagnostics_Page::init();

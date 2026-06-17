@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.9] - 2026-06-17
+
+### Fixed
+- **"Force ERPNext Sync" button always reported "Request failed" on slow syncs.** The button called `run_sales_order_sync` synchronously over admin-ajax; on a multi-item order the ERP↔Woo round-trip runs past the host's 30s PHP `max_execution_time`, so LiteSpeed killed the PHP process before it could return JSON. The browser got a 5xx HTML page → the JS catch-all showed the generic "Request failed", even though ERPNext had received the request and finished the sync anyway (the order appeared in ERP regardless). The force-sync now runs as an **async Action Scheduler job** (WP-Cron single-event fallback): the button enqueues the work and returns immediately ("Sync queued…"), the worker runs the sync off the HTTP request and records the outcome as an **order note** + `_es_last_force_sync` meta. A WP-side timeout is reported as "request sent — verify in ERPNext" rather than a hard failure, since the ERP sync typically completes. Both the meta-box button (AJAX) and the order-list row action share the new enqueue path. The async callback is registered outside the `is_admin()` gate so the cron/loopback queue runner can find it. Per-order lock TTL raised 30s→300s to span the queued run. The worker's ERP-client timeout is kept **under** the host's 30s PHP hard cap (25s) so `wp_remote_post` returns a graceful timeout — releasing the lock and writing the note — before PHP could kill the process mid-call (`set_time_limit(0)` is attempted but is a no-op on hosts that disable it). The enqueue path checks `as_enqueue_async_action()`'s return and releases the lock + reports failure if scheduling fails, so a scheduling error can't leave a "queued" message with a wedged lock and no job.
+
 ## [1.12.8] - 2026-06-10
 
 ### Fixed

@@ -18,8 +18,9 @@ defined( 'ABSPATH' ) || exit;
  */
 class ES_Order_Actions {
 
-    /** Per-order force-sync mutex TTL (seconds). */
-    const FORCE_SYNC_LOCK_TTL = 30;
+    /** Per-order force-sync mutex TTL (seconds). Long enough to cover the queued
+     *  async job's run; the worker deletes the lock when it finishes. */
+    const FORCE_SYNC_LOCK_TTL = 300;
     /** Max orders accepted in a single bulk Re-poll submission. */
     const BULK_REPOLL_LIMIT = 25;
     /** Sleep between per-order polls during bulk action (microseconds). */
@@ -187,27 +188,14 @@ class ES_Order_Actions {
         }
         check_admin_referer( 'es_row_force_sync_' . $order_id );
 
-        $lock_key = 'es_force_sync_lock_' . $order_id;
-        if ( get_transient( $lock_key ) ) {
-            wp_safe_redirect( add_query_arg( 'es_row_msg', 'force-busy-' . $order_id, self::row_action_redirect_target( $order_id ) ) );
-            exit;
-        }
-        set_transient( $lock_key, time(), self::FORCE_SYNC_LOCK_TTL );
-
-        $client = ES_ERPNext_Client::from_settings( 30 );
-        if ( ! $client ) {
-            delete_transient( $lock_key );
-            wp_safe_redirect( add_query_arg( 'es_row_msg', 'force-noerp-' . $order_id, self::row_action_redirect_target( $order_id ) ) );
-            exit;
-        }
-        $so_name = self::derive_so_name( $order_id );
-        $r = $client->post(
-            '/api/method/woocommerce_fusion.tasks.sync_sales_orders.run_sales_order_sync',
-            array( 'sales_order_name' => $so_name )
+        $status = self::enqueue_force_sync( $order_id );
+        $map    = array(
+            'busy'    => 'force-busy',
+            'noerp'   => 'force-noerp',
+            'noqueue' => 'force-fail',
+            'queued'  => 'force-queued',
         );
-        delete_transient( $lock_key );
-
-        $code = is_wp_error( $r ) ? 'force-fail' : 'force-ok';
+        $code = $map[ $status ] ?? 'force-queued';
         wp_safe_redirect( add_query_arg( 'es_row_msg', $code . '-' . $order_id, self::row_action_redirect_target( $order_id ) ) );
         exit;
     }
@@ -222,10 +210,11 @@ class ES_Order_Actions {
         $known = array(
             'repoll-done' => 'repoll',
             'no-tracking' => 'noTracking',
-            'force-ok'    => 'forceOk',
-            'force-fail'  => 'forceFail',
-            'force-busy'  => 'forceBusy',
-            'force-noerp' => 'forceNoErp',
+            'force-ok'     => 'forceOk',
+            'force-fail'   => 'forceFail',
+            'force-busy'   => 'forceBusy',
+            'force-noerp'  => 'forceNoErp',
+            'force-queued' => 'forceQueued',
         );
         $matched_prefix = null;
         foreach ( array_keys( $known ) as $p ) {
@@ -271,6 +260,10 @@ class ES_Order_Actions {
             case 'force-noerp':
                 $class = 'notice-error';
                 $text  = __( 'ERPNext credentials are not configured.', 'erpnext-shipping' );
+                break;
+            case 'force-queued':
+                $class = 'notice-info';
+                $text  = sprintf( __( 'ERPNext sync queued for order #%d — the result will appear in the order notes shortly.', 'erpnext-shipping' ), $order_id );
                 break;
             default:
                 return;
@@ -410,20 +403,103 @@ class ES_Order_Actions {
             wp_send_json_error( array( 'message' => 'Invalid nonce.' ), 400 );
         }
 
+        $status = self::enqueue_force_sync( $order_id );
+        switch ( $status ) {
+            case 'busy':
+                wp_send_json_error( array(
+                    'message' => __( 'A force-sync for this order is already in progress.', 'erpnext-shipping' ),
+                ), 429 );
+                break;
+            case 'noerp':
+                wp_send_json_error( array(
+                    'message' => __( 'ERPNext credentials are not configured in shipping method settings.', 'erpnext-shipping' ),
+                ), 500 );
+                break;
+            case 'noqueue':
+                wp_send_json_error( array(
+                    'message' => __( 'Could not queue the sync (scheduler unavailable). Try again shortly.', 'erpnext-shipping' ),
+                ), 500 );
+                break;
+            case 'queued':
+            default:
+                wp_send_json_success( array(
+                    'message' => sprintf(
+                        /* translators: %s = Sales Order name */
+                        __( 'Sync queued for %s — it runs in the background; the result is recorded in the order notes.', 'erpnext-shipping' ),
+                        self::derive_so_name( $order_id )
+                    ),
+                ) );
+        }
+    }
+
+    /**
+     * Queue an async ERPNext sync for one order. The actual (slow) sync runs in
+     * run_force_sync_job() off the HTTP request, so it can never hit the host's
+     * 30s PHP time limit — which was killing the previous synchronous button and
+     * returning a non-JSON 5xx ("Request failed") even though ERPNext still
+     * completed the sync.
+     *
+     * @return string One of: 'busy' | 'noerp' | 'queued' | 'noqueue'.
+     */
+    private static function enqueue_force_sync( $order_id ) {
+        $order_id = intval( $order_id );
         $lock_key = 'es_force_sync_lock_' . $order_id;
+
         if ( get_transient( $lock_key ) ) {
-            wp_send_json_error( array(
-                'message' => __( 'A force-sync for this order is already in progress.', 'erpnext-shipping' ),
-            ), 429 );
+            return 'busy';
+        }
+        // Cheap, no-HTTP credentials check so we can fail fast with a clear message.
+        if ( ! ES_ERPNext_Client::from_settings( 30 ) ) {
+            return 'noerp';
         }
         set_transient( $lock_key, time(), self::FORCE_SYNC_LOCK_TTL );
 
-        $client = ES_ERPNext_Client::from_settings( 30 );
+        if ( function_exists( 'as_enqueue_async_action' ) ) {
+            // as_enqueue_async_action() returns 0 on a scheduling error — don't
+            // report "queued" (with a held lock + no job) if the enqueue failed.
+            $action_id = as_enqueue_async_action( 'es_force_sync_job', array( $order_id ), 'erpnext-shipping' );
+            if ( $action_id ) {
+                return 'queued';
+            }
+            delete_transient( $lock_key );
+            return 'noqueue';
+        }
+        // Fallback: WP-Cron single event, nudged to run promptly.
+        if ( wp_schedule_single_event( time() + 1, 'es_force_sync_job', array( $order_id ) ) ) {
+            if ( function_exists( 'spawn_cron' ) ) {
+                spawn_cron();
+            }
+            return 'queued';
+        }
+        delete_transient( $lock_key );
+        return 'noqueue';
+    }
+
+    /**
+     * Background worker (Action Scheduler async action, or WP-Cron fallback).
+     * Runs the slow ERPNext sync away from the HTTP request and records the
+     * outcome on the order as a note + meta. Registered in erpnext-shipping.php
+     * outside the is_admin() gate so the cron/loopback queue runner can find it.
+     */
+    public static function run_force_sync_job( $order_id ) {
+        $order_id = intval( $order_id );
+        $lock_key = 'es_force_sync_lock_' . $order_id;
+
+        // Best-effort: lift the time limit for this background run. On hosts that
+        // disable set_time_limit (e.g. shared LiteSpeed with a hard 30s cap) this
+        // is a no-op — so the ERP client timeout below is deliberately kept UNDER
+        // 30s, guaranteeing wp_remote_post returns a graceful timeout (lock release
+        // + "sent — verify" note) before PHP would kill the process mid-call. The
+        // Fusion sync completes on the ERP side regardless of whether we wait.
+        if ( function_exists( 'set_time_limit' ) ) {
+            @set_time_limit( 0 );
+        }
+
+        $client = ES_ERPNext_Client::from_settings( 25 );
         if ( ! $client ) {
             delete_transient( $lock_key );
-            wp_send_json_error( array(
-                'message' => __( 'ERPNext credentials are not configured in shipping method settings.', 'erpnext-shipping' ),
-            ), 500 );
+            self::log_force_sync_result( $order_id, false, __( 'ERPNext credentials are not configured.', 'erpnext-shipping' ) );
+            return;
         }
 
         $so_name = self::derive_so_name( $order_id );
@@ -431,19 +507,69 @@ class ES_Order_Actions {
             '/api/method/woocommerce_fusion.tasks.sync_sales_orders.run_sales_order_sync',
             array( 'sales_order_name' => $so_name )
         );
-
         delete_transient( $lock_key );
 
         if ( is_wp_error( $result ) ) {
-            wp_send_json_error( array( 'message' => $result->get_error_message() ), 502 );
+            $err = $result->get_error_message();
+            // A WP-side timeout does NOT mean ERPNext failed — once the request is
+            // received, the Fusion sync usually completes there regardless.
+            $timed_out = ( false !== stripos( $err, 'timed out' ) || false !== stripos( $err, 'cURL error 28' ) );
+            if ( $timed_out ) {
+                self::log_force_sync_result(
+                    $order_id,
+                    null,
+                    sprintf(
+                        /* translators: %s = Sales Order name */
+                        __( 'ERPNext sync request sent for %s, but the response timed out — verify the Sales Order in ERPNext.', 'erpnext-shipping' ),
+                        $so_name
+                    )
+                );
+            } else {
+                self::log_force_sync_result(
+                    $order_id,
+                    false,
+                    sprintf(
+                        /* translators: 1: Sales Order name, 2: error message */
+                        __( 'ERPNext sync failed for %1$s: %2$s', 'erpnext-shipping' ),
+                        $so_name,
+                        $err
+                    )
+                );
+            }
+            return;
         }
-        wp_send_json_success( array(
-            'message' => sprintf(
+
+        self::log_force_sync_result(
+            $order_id,
+            true,
+            sprintf(
                 /* translators: %s = Sales Order name */
-                __( 'Sync requested for %s.', 'erpnext-shipping' ),
+                __( 'ERPNext sync completed for %s.', 'erpnext-shipping' ),
                 $so_name
-            ),
+            )
+        );
+    }
+
+    /**
+     * Record a force-sync outcome on the order (private note + meta) so the
+     * result of the async job is visible from the order screen.
+     *
+     * @param int         $order_id Order ID.
+     * @param bool|null   $ok       true = success, false = failure, null = sent/indeterminate.
+     * @param string      $message  Human-readable note.
+     */
+    private static function log_force_sync_result( $order_id, $ok, $message ) {
+        $order = wc_get_order( $order_id );
+        if ( ! $order ) {
+            return;
+        }
+        $order->add_order_note( $message );
+        $order->update_meta_data( '_es_last_force_sync', array(
+            'time'    => time(),
+            'status'  => ( true === $ok ) ? 'ok' : ( ( null === $ok ) ? 'sent' : 'fail' ),
+            'message' => $message,
         ) );
+        $order->save();
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
