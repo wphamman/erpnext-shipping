@@ -103,7 +103,7 @@ class ES_Stock_Sync {
         $location_ids = array_unique( array_values( $warehouse_map ) );
 
         $body = $this->client->get( '/api/resource/Bin', array(
-            'fields'             => wp_json_encode( array( 'item_code', 'warehouse', 'actual_qty' ) ),
+            'fields'             => wp_json_encode( array( 'item_code', 'warehouse', 'actual_qty', 'reserved_qty' ) ),
             'filters'            => wp_json_encode( array(
                 array( 'warehouse', 'in', $warehouses ),
                 array( 'actual_qty', '>', 0 ),
@@ -128,11 +128,14 @@ class ES_Stock_Sync {
         }
 
         // Build stock map: item_code => { location_id: qty, ... }.
+        // Net availability = actual - reserved: stock reserved by submitted
+        // Sales Orders is not available for web sale, pickup, or dispatch
+        // planning (matches woocommerce_fusion's subtract_reserved_stock).
         $stock = array();
         foreach ( $body['data'] as $bin ) {
             $item      = $bin['item_code'];
             $warehouse = $bin['warehouse'];
-            $qty       = floatval( $bin['actual_qty'] );
+            $qty       = floatval( $bin['actual_qty'] ) - floatval( $bin['reserved_qty'] ?? 0 );
             $loc_id    = $warehouse_map[ $warehouse ] ?? null;
 
             if ( ! $loc_id ) {
@@ -143,6 +146,23 @@ class ES_Stock_Sync {
                 $stock[ $item ] = $empty_stock;
             }
             $stock[ $item ][ $loc_id ] += $qty;
+        }
+
+        // Clamp over-reserved locations to zero, and drop items with no net
+        // availability anywhere so they follow the depleted path in
+        // sync_to_slw() (core stock zeroed + marked out of stock).
+        foreach ( $stock as $item => $location_qtys ) {
+            $total = 0;
+            foreach ( $location_qtys as $loc_id => $qty ) {
+                if ( $qty < 0 ) {
+                    $stock[ $item ][ $loc_id ] = 0;
+                    $qty                       = 0;
+                }
+                $total += $qty;
+            }
+            if ( $total <= 0 ) {
+                unset( $stock[ $item ] );
+            }
         }
 
         // Get previous stock before overwriting — needed to zero out depleted items in SLW.

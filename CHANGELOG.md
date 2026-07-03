@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.11] - 2026-07-03
+
+### Changed
+- **Stock sync now honours ERPNext reservations (net availability = actual − reserved).** The sync previously read Bin `actual_qty` only, so stock reserved by submitted Sales Orders still showed as available for web sale, pickup, and dispatch planning — and the restore path could flip a product back in-stock right after woocommerce_fusion (running with `subtract_reserved_stock`) had correctly marked it unavailable, leaving the two writers fighting over any item with large open-SO reservations. Per-location quantities are now `actual_qty - reserved_qty` (over-reserved locations clamp to zero), items with no net availability anywhere follow the depleted path (core stock zeroed + out of stock), and the SLW location meta, pickup feasibility gate, and fulfillment planner all see net availability.
+
 ## [1.12.10] - 2026-07-03
 
 ### Fixed
