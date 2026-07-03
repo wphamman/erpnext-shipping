@@ -262,12 +262,16 @@ class ES_Stock_Sync {
             // quantity is the GLOBAL net (may be lower than the sum of the
             // clamped location displays when another location is
             // over-reserved) so it never exceeds what Fusion would push.
+            // Stock + status are set on ONE object and saved once —
+            // wc_update_product_stock() on a separate instance followed by
+            // saving this (stale) object raced the status write and could
+            // leave qty/status inconsistent.
             $restore_qty = floatval( $global_net[ $item_code ] ?? $total_qty );
             $product     = wc_get_product( $product_id );
             if ( $product && $product->managing_stock() && $restore_qty > 0 ) {
                 $current_stock = (float) $product->get_stock_quantity();
                 if ( $current_stock <= 0 || 'outofstock' === $product->get_stock_status() ) {
-                    wc_update_product_stock( $product_id, $restore_qty );
+                    $product->set_stock_quantity( $restore_qty );
                     $product->set_stock_status( 'instock' );
                     $product->save();
                 }
@@ -290,10 +294,12 @@ class ES_Stock_Sync {
                 update_post_meta( $product_id, '_stock_at_' . $term_id, 0 );
             }
 
-            // Update WC main stock to 0 and mark as out of stock.
+            // Update WC main stock to 0 and mark as out of stock (single
+            // object + single save — see note on the restore path above;
+            // the old two-instance write left qty=0 with status "instock").
             $product = wc_get_product( $product_id );
             if ( $product && $product->managing_stock() ) {
-                wc_update_product_stock( $product_id, 0 );
+                $product->set_stock_quantity( 0 );
                 $product->set_stock_status( 'outofstock' );
                 $product->save();
             }

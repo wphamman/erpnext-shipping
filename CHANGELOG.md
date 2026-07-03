@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.14] - 2026-07-03
+
+### Fixed
+- **Deplete/restore left stock quantity and stock status inconsistent.** Both paths wrote stock via `wc_update_product_stock()` on one product instance, then saved the status on a second, stale instance — observed as depleted products showing qty 0 with status still "instock". Quantity and status are now set on a single object with a single save.
+
 ## [1.12.13] - 2026-07-03
 
 ### Added
