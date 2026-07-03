@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.12] - 2026-07-03
+
+### Fixed
+- **v1.12.11 regression: cross-warehouse over-reservation resurrected stock.** Depletion was decided on the sum of per-location values *after* clamping negatives to zero, so an item over-reserved at one warehouse (reservation larger than that warehouse's own stock) still counted the other warehouses' units as available — the restore path then flipped the product back in-stock right after woocommerce_fusion had correctly pushed a negative global net. Depletion (and the restore quantity) now use the GLOBAL raw net across all locations, matching Fusion exactly; per-location values are clamped only afterwards, for the SLW display and pickup gate.
+
 ## [1.12.11] - 2026-07-03
 
 ### Changed

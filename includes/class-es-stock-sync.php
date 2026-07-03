@@ -148,20 +148,25 @@ class ES_Stock_Sync {
             $stock[ $item ][ $loc_id ] += $qty;
         }
 
-        // Clamp over-reserved locations to zero, and drop items with no net
-        // availability anywhere so they follow the depleted path in
-        // sync_to_slw() (core stock zeroed + marked out of stock).
+        // Depletion is decided on the GLOBAL raw net (sum of actual - reserved
+        // across all locations, negatives included) so it matches
+        // woocommerce_fusion's stock push exactly. A reservation larger than
+        // its own warehouse's stock must consume availability elsewhere too —
+        // clamping per location first would resurrect stock Fusion correctly
+        // zeroed (v1.12.11 regression). Per-location values are clamped to
+        // zero AFTER the global decision, for the SLW display and pickup gate.
+        $global_net = array();
         foreach ( $stock as $item => $location_qtys ) {
-            $total = 0;
+            $raw = array_sum( $location_qtys );
+            if ( $raw <= 0 ) {
+                unset( $stock[ $item ] );
+                continue;
+            }
+            $global_net[ $item ] = $raw;
             foreach ( $location_qtys as $loc_id => $qty ) {
                 if ( $qty < 0 ) {
                     $stock[ $item ][ $loc_id ] = 0;
-                    $qty                       = 0;
                 }
-                $total += $qty;
-            }
-            if ( $total <= 0 ) {
-                unset( $stock[ $item ] );
             }
         }
 
@@ -172,7 +177,7 @@ class ES_Stock_Sync {
         update_option( self::OPTION_LAST_SYNC, time(), false );
 
         // Write per-location stock to SLW product meta (if SLW is installed).
-        $this->sync_to_slw( $stock, $prev_stock );
+        $this->sync_to_slw( $stock, $prev_stock, $global_net );
 
         return count( $stock );
     }
@@ -219,7 +224,7 @@ class ES_Stock_Sync {
      * Also zeroes out SLW meta for items that dropped to zero stock since the last sync.
      * Skips gracefully if SLW plugin is not installed.
      */
-    private function sync_to_slw( $stock, $prev_stock = array() ) {
+    private function sync_to_slw( $stock, $prev_stock = array(), $global_net = array() ) {
         if ( ! taxonomy_exists( 'location' ) ) {
             return;
         }
@@ -253,12 +258,16 @@ class ES_Stock_Sync {
             }
 
             // Restore WC core stock if product was previously depleted.
-            // This is the inverse of the depletion path below.
-            $product = wc_get_product( $product_id );
-            if ( $product && $product->managing_stock() && $total_qty > 0 ) {
+            // This is the inverse of the depletion path below. The restore
+            // quantity is the GLOBAL net (may be lower than the sum of the
+            // clamped location displays when another location is
+            // over-reserved) so it never exceeds what Fusion would push.
+            $restore_qty = floatval( $global_net[ $item_code ] ?? $total_qty );
+            $product     = wc_get_product( $product_id );
+            if ( $product && $product->managing_stock() && $restore_qty > 0 ) {
                 $current_stock = (float) $product->get_stock_quantity();
                 if ( $current_stock <= 0 || 'outofstock' === $product->get_stock_status() ) {
-                    wc_update_product_stock( $product_id, $total_qty );
+                    wc_update_product_stock( $product_id, $restore_qty );
                     $product->set_stock_status( 'instock' );
                     $product->save();
                 }
