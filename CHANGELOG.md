@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.13] - 2026-07-03
+
+### Added
+- **Watchdog: stale "Pending Payment" alert.** Orders sitting in pending payment longer than a threshold (default 2 days) now appear in the daily digest — previously an unpaid order could hold an ERP-side reservation for weeks with no alert, because pending was deliberately outside the watched fulfillment statuses.
+- **Watchdog: additional alert recipients.** New "Additional alert recipients" setting (comma-separated emails); the digest goes to the site admin email plus these addresses.
+
+### Fixed
+- **WooCommerce no longer auto-restores stock on order cancel / payment failure when ERPNext is configured.** WC's cancel path added the order's units back to Woo stock even though ERPNext (the stock source of truth) had merely released a reservation — the units never existed as sellable stock, and the phantom quantity survived until the next full sync (observed: a cancelled 3-unit order put 3 units "in stock" on a product with zero saleable stock). `woocommerce_can_restore_order_stock` is now filtered off when any shipping-method instance has an ERPNext URL configured. Manual "restock items" on refunds is a separate path and still works. Escape hatch: `add_filter( 'es_erp_owns_stock', '__return_false' )`.
+
 ## [1.12.12] - 2026-07-03
 
 ### Fixed

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.12.12
+ * Version: 1.12.13
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Requires at least: 6.0
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.12.12' );
+define( 'ES_SHIPPING_VERSION', '1.12.13' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // Declare HPOS (High-Performance Order Storage) compatibility. The plugin already
@@ -549,6 +549,47 @@ add_action( 'es_fulfillment_watchdog', function () {
     }
     ES_Fulfillment_Watchdog::run();
 } );
+
+/**
+ * True when any shipping-method instance has an ERPNext URL configured —
+ * i.e. ERPNext is integrated as the stock source of truth.
+ */
+function es_erp_is_configured() {
+    static $configured = null;
+    if ( null !== $configured ) {
+        return $configured;
+    }
+    global $wpdb;
+    $configured = false;
+    $rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT option_value FROM {$wpdb->options} WHERE option_name LIKE %s",
+            'woocommerce_erpnext_shipping_%_settings'
+        )
+    );
+    foreach ( $rows as $row ) {
+        $opts = maybe_unserialize( $row->option_value );
+        if ( is_array( $opts ) && ! empty( $opts['erp_url'] ) ) {
+            $configured = true;
+            break;
+        }
+    }
+    return $configured;
+}
+
+// When ERPNext owns stock, block WooCommerce's automatic stock restore on
+// order cancel / payment failure. ERPNext releases the reservation on its
+// side and the sync pushes the true figure; letting WC add units back
+// corrupts stock until the next full sync (a cancelled order re-added units
+// that only ever existed as an ERP reservation). Manual "restock items" on
+// refunds is a different code path and still works. Escape hatch:
+// add_filter( 'es_erp_owns_stock', '__return_false' ).
+add_filter( 'woocommerce_can_restore_order_stock', function ( $can_restore, $order ) {
+    if ( es_erp_is_configured() && apply_filters( 'es_erp_owns_stock', true, $order ) ) {
+        return false;
+    }
+    return $can_restore;
+}, 10, 2 );
 
 // Hook the fulfillment tracking poll action.
 add_action( 'es_fulfillment_tracking_poll', function () {

@@ -208,7 +208,7 @@ class ES_Admin_Page {
         // Watchdog settings.
         $wd = get_option( 'es_watchdog_settings', array() );
         $wd_checkboxes = array(
-            'alert_processing', 'alert_processing_lp', 'alert_on_hold',
+            'alert_pending', 'alert_processing', 'alert_processing_lp', 'alert_on_hold',
             'alert_dispatched_pickup', 'alert_shipped', 'alert_api_failures',
             'alert_pickup_reminder',
         );
@@ -216,7 +216,7 @@ class ES_Admin_Page {
             $wd[ $key ] = isset( $_POST[ 'wd_' . $key ] ) ? 'yes' : 'no';
         }
         $wd_numbers = array(
-            'processing_days', 'processing_lp_days', 'on_hold_days',
+            'pending_days', 'processing_days', 'processing_lp_days', 'on_hold_days',
             'dispatched_pickup_days', 'shipped_days', 'api_fail_threshold',
             'pickup_reminder_1_days', 'pickup_reminder_2_days',
         );
@@ -224,6 +224,16 @@ class ES_Admin_Page {
             if ( isset( $_POST[ 'wd_' . $key ] ) ) {
                 $wd[ $key ] = absint( $_POST[ 'wd_' . $key ] );
             }
+        }
+        if ( isset( $_POST['wd_alert_emails'] ) ) {
+            $emails = array();
+            foreach ( explode( ',', sanitize_text_field( wp_unslash( $_POST['wd_alert_emails'] ) ) ) as $e ) {
+                $e = sanitize_email( trim( $e ) );
+                if ( $e ) {
+                    $emails[] = $e;
+                }
+            }
+            $wd['alert_emails'] = implode( ', ', $emails );
         }
         update_option( 'es_watchdog_settings', $wd );
 
@@ -520,6 +530,20 @@ class ES_Admin_Page {
 
                     <h3 style="margin:15px 0 8px;"><?php esc_html_e( 'Admin Alerts (daily digest email)', 'erpnext-shipping' ); ?></h3>
                     <table class="form-table" style="margin-top:0;">
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'Additional alert recipients', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <input type="text" name="wd_alert_emails" value="<?php echo esc_attr( $wd_v( 'alert_emails', '' ) ); ?>" style="width:360px;" placeholder="name@example.com, other@example.com">
+                                <p class="description"><?php esc_html_e( 'Comma-separated. The digest always goes to the site admin email as well.', 'erpnext-shipping' ); ?></p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e( 'Pending payment stuck', 'erpnext-shipping' ); ?></th>
+                            <td>
+                                <label><input type="checkbox" name="wd_alert_pending" value="yes" <?php checked( $wd_v( 'alert_pending', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Enabled', 'erpnext-shipping' ); ?></label>
+                                &nbsp; <input type="number" name="wd_pending_days" value="<?php echo esc_attr( $wd_v( 'pending_days', 2 ) ); ?>" min="1" max="30" style="width:60px;"> <?php esc_html_e( 'days', 'erpnext-shipping' ); ?>
+                            </td>
+                        </tr>
                         <tr>
                             <th scope="row"><?php esc_html_e( 'Processing stuck', 'erpnext-shipping' ); ?></th>
                             <td>

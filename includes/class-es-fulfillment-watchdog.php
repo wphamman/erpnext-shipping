@@ -11,6 +11,7 @@ class ES_Fulfillment_Watchdog {
      * Default thresholds (days). Overridden by saved options.
      */
     private static $default_thresholds = array(
+        'pending_days'           => 2,
         'processing_days'        => 3,
         'processing_lp_days'     => 3,
         'on_hold_days'           => 2,
@@ -19,6 +20,7 @@ class ES_Fulfillment_Watchdog {
         'pickup_reminder_1_days' => 3,
         'pickup_reminder_2_days' => 10,
         'api_fail_threshold'     => 3,
+        'alert_emails'           => '',
     );
 
     /**
@@ -41,6 +43,12 @@ class ES_Fulfillment_Watchdog {
 
         // 1. Stale order checks (admin alerts).
         $status_checks = array(
+            array(
+                'key'       => 'pending_days',
+                'status'    => 'pending',
+                'label'     => 'Pending Payment',
+                'enabled'   => 'alert_pending',
+            ),
             array(
                 'key'       => 'processing_days',
                 'status'    => 'processing',
@@ -237,8 +245,17 @@ class ES_Fulfillment_Watchdog {
      * Send one admin digest email with all alert groups.
      */
     private static function send_admin_digest( $alert_groups ) {
-        $admin_email = get_option( 'admin_email' );
-        $site_name   = wp_specialchars_decode( get_option( 'blogname' ), ENT_QUOTES );
+        // Recipients: site admin email + any extra addresses configured in
+        // the watchdog settings (comma-separated).
+        $settings   = self::get_settings();
+        $recipients = array( get_option( 'admin_email' ) );
+        foreach ( explode( ',', (string) ( $settings['alert_emails'] ?? '' ) ) as $extra ) {
+            $extra = sanitize_email( trim( $extra ) );
+            if ( $extra && ! in_array( $extra, $recipients, true ) ) {
+                $recipients[] = $extra;
+            }
+        }
+        $site_name = wp_specialchars_decode( get_option( 'blogname' ), ENT_QUOTES );
         $admin_url   = admin_url( 'admin.php?page=wc-orders' );
 
         $subject = sprintf( '[%s] Order Watchdog Alert — %d issue(s) found', $site_name, count( $alert_groups ) );
@@ -273,7 +290,7 @@ class ES_Fulfillment_Watchdog {
         $body .= '</div>';
 
         $headers = array( 'Content-Type: text/html; charset=UTF-8' );
-        wp_mail( $admin_email, $subject, $body, $headers );
+        wp_mail( $recipients, $subject, $body, $headers );
     }
 
     /**
