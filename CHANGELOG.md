@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.10] - 2026-07-03
+
+### Fixed
+- **Force ERPNext Sync and "open in ERPNext" links used the wrong Sales Order name on non-retail sites.** `derive_so_name()` hardcoded the `WEB1-` naming-series prefix, but woocommerce_fusion uses a different series per WooCommerce Server (e.g. `WEB3-` for a second site). On such sites every Force ERPNext Sync asked Fusion to sync a non-existent Sales Order (HTTP 404 `DoesNotExistError` reported as a sync failure on the order) and the meta-box ERPNext link pointed at a non-existent document — even though the real Sales Order synced fine under its own prefix. The prefix is now a shipping-method setting (**ERP Sales Order prefix**, default `WEB1-`), resolved from instance settings like the other ERP options.
+
 ## [1.12.9] - 2026-06-17
 
 ### Fixed

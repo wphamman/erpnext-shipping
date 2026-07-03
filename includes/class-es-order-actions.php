@@ -575,13 +575,36 @@ class ES_Order_Actions {
     // ── Helpers ────────────────────────────────────────────────────────────
 
     /**
-     * woocommerce_fusion uses a `WEB1-{padded order id}` naming series for
-     * WooCommerce-synced Sales Orders. This holds for online orders. ERP-
-     * generated orders use a different series, which is fine — this button
-     * only appears on WC orders.
+     * woocommerce_fusion uses a `{prefix}{padded order id}` naming series for
+     * WooCommerce-synced Sales Orders, with a different prefix per WooCommerce
+     * Server (site) — configured via the `erp_so_prefix` shipping-method
+     * setting (default `WEB1-`). This holds for online orders. ERP-generated
+     * orders use a different series, which is fine — this button only appears
+     * on WC orders.
      */
     public static function derive_so_name( $order_id ) {
-        return 'WEB1-' . str_pad( (string) $order_id, 6, '0', STR_PAD_LEFT );
+        return self::resolve_so_prefix() . str_pad( (string) $order_id, 6, '0', STR_PAD_LEFT );
+    }
+
+    /**
+     * Pull the Sales Order naming-series prefix from any shipping-method
+     * instance settings (same resolution pattern as resolve_erp_url).
+     */
+    public static function resolve_so_prefix() {
+        global $wpdb;
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT option_value FROM {$wpdb->options} WHERE option_name LIKE %s",
+                'woocommerce_erpnext_shipping_%_settings'
+            )
+        );
+        foreach ( $rows as $row ) {
+            $opts = maybe_unserialize( $row->option_value );
+            if ( is_array( $opts ) && ! empty( $opts['erp_so_prefix'] ) ) {
+                return $opts['erp_so_prefix'];
+            }
+        }
+        return 'WEB1-';
     }
 
     /**

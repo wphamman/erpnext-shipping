@@ -211,6 +211,10 @@ erpnext-shipping/
 └── CLAUDE.md
 ```
 
+## Roadmap / known limitations
+
+- **Cart & Checkout Blocks support (planned).** The checkout pickup-location selector, the multi-branch pickup feasibility gate, and the own-vehicle delivery flow all render through **classic** WooCommerce checkout hooks (`woocommerce_after_shipping_rate`, `woocommerce_review_order_*`, AJAX on classic fragments). The block-based **Cart**/**Checkout** (`woocommerce/checkout` block) render client-side from the Store API and never fire these PHP hooks, so the pickup selector does **not** appear on a block checkout — which is why HPOS-style Blocks compatibility is intentionally **not** declared (see CHANGELOG [1.12.5]). Stores using this plugin must keep Cart/Checkout on the classic `[woocommerce_cart]` / `[woocommerce_checkout]` shortcodes. (The same constraint affects Stock Locations for WooCommerce's cart location selector.) Adding Blocks support is a future enhancement and a real piece of work: extend the **Store API** (`woocommerce_store_api_register_endpoint_data` for shipping-package/cart data + an update callback) and ship a **React Slot/Fill** integration (`registerCheckoutBlock` / `ExperimentalOrderShippingPackages`) with its own webpack build, then declare `cart_checkout_blocks` compatibility. Order-creation hooks (`woocommerce_checkout_create_order_*`) already fire under block checkout, so the persistence layer can largely be reused — it's the selector UI that must be rebuilt.
+
 ## Support & contributing
 
 This plugin is maintained as a by-product of running live WooCommerce + ERPNext stores, and is shared in the hope it's useful to others. Support is **best-effort, no SLA**.

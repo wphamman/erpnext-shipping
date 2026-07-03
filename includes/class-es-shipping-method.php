@@ -72,6 +72,12 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'title' => __( 'API Secret', 'erpnext-shipping' ),
                 'type'  => 'password',
             ),
+            'erp_so_prefix' => array(
+                'title'       => __( 'ERP Sales Order prefix', 'erpnext-shipping' ),
+                'type'        => 'text',
+                'default'     => 'WEB1-',
+                'description' => __( 'Naming-series prefix woocommerce_fusion uses for Sales Orders created from this site (differs per WooCommerce Server, e.g. WEB1-, WEB3-). Used for ERPNext links and Force ERPNext Sync.', 'erpnext-shipping' ),
+            ),
             'erp_sync_button' => array(
                 'title' => __( 'Stock Sync', 'erpnext-shipping' ),
                 'type'  => 'sync_button',
