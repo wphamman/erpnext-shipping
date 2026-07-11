@@ -145,6 +145,9 @@ class ES_Admin_Page {
                     'serviced_by'      => ( 'collection_point' === $loc_type && isset( $loc['serviced_by'] ) && is_array( $loc['serviced_by'] ) )
                         ? array_values( array_intersect( array_map( 'sanitize_title', $loc['serviced_by'] ), $warehouse_ids ) )
                         : array(),
+                    // TCG Locker L2L dispatch origin — warehouses only. Collection
+                    // points are never TCG Locker dispatch origins.
+                    'tcg_locker_dispatch_enabled' => 'warehouse' === $loc_type && ! empty( $loc['tcg_locker_dispatch_enabled'] ),
                     'customer_message' => sanitize_textarea_field( $loc['customer_message'] ?? '' ),
                 );
             }
@@ -159,6 +162,7 @@ class ES_Admin_Page {
             'erp_url',
             'title', 'company_name',
             'bulk_delivery_label', 'bulk_delivery_quote_label',
+            'tcg_locker_rate_label', 'tcg_locker_excluded_shipping_classes',
         );
         foreach ( $text_fields as $key ) {
             if ( isset( $_POST[ $key ] ) ) {
@@ -172,6 +176,7 @@ class ES_Admin_Page {
             'erp_api_key', 'erp_api_secret',
             'tcg_api_token', 'mds_api_token',
             'bulk_delivery_google_api_key',
+            'tcg_locker_api_token',
         );
         foreach ( $credential_fields as $key ) {
             if ( ! isset( $_POST[ $key ] ) ) {
@@ -189,6 +194,8 @@ class ES_Admin_Page {
             'bulk_delivery_rate_per_km', 'bulk_delivery_free_threshold',
             'bulk_delivery_max_distance_km', 'bulk_delivery_default_distance_km',
             'bulk_delivery_round_trip_multiplier',
+            'tcg_locker_fixed_customer_price', 'tcg_locker_free_shipping_threshold',
+            'tcg_locker_rate_timeout',
         );
         foreach ( $number_fields as $key ) {
             if ( isset( $_POST[ $key ] ) ) {
@@ -196,7 +203,7 @@ class ES_Admin_Page {
             }
         }
 
-        $checkbox_fields = array( 'enabled', 'tcg_enabled', 'mds_enabled', 'debug', 'bulk_delivery_enabled' );
+        $checkbox_fields = array( 'enabled', 'tcg_enabled', 'mds_enabled', 'debug', 'bulk_delivery_enabled', 'tcg_locker_enabled' );
         foreach ( $checkbox_fields as $key ) {
             $opts[ $key ] = isset( $_POST[ $key ] ) ? 'yes' : 'no';
         }
@@ -205,6 +212,27 @@ class ES_Admin_Page {
         foreach ( $select_fields as $key ) {
             if ( isset( $_POST[ $key ] ) ) {
                 $opts[ $key ] = sanitize_text_field( wp_unslash( $_POST[ $key ] ) );
+            }
+        }
+
+        // TCG Locker pricing mode (constrained set).
+        if ( isset( $_POST['tcg_locker_pricing_mode'] ) ) {
+            $mode = sanitize_text_field( wp_unslash( $_POST['tcg_locker_pricing_mode'] ) );
+            $opts['tcg_locker_pricing_mode'] = in_array( $mode, array( 'live', 'fixed' ), true ) ? $mode : 'live';
+        }
+
+        // TCG Locker API base — validated: the path must end EXACTLY in /api/v1
+        // (a merely-containing URL is rejected, since the origin for /generate/*
+        // labels is derived by stripping a terminal /api/v1). Invalid input is
+        // rejected without overwriting the stored value.
+        if ( isset( $_POST['tcg_locker_api_url'] ) ) {
+            $url = ES_TCG_Locker_Client::normalize_base( wp_unslash( $_POST['tcg_locker_api_url'] ) );
+            if ( '' === $url ) {
+                $opts['tcg_locker_api_url'] = ES_TCG_LOCKER_SANDBOX_BASE;
+            } elseif ( ES_TCG_Locker_Client::is_valid_api_base( $url ) ) {
+                $opts['tcg_locker_api_url'] = esc_url_raw( $url );
+            } else {
+                set_transient( 'es_tcg_locker_url_notice', 1, 60 );
             }
         }
 
@@ -338,6 +366,10 @@ class ES_Admin_Page {
                 <div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'erpnext-shipping' ); ?></p></div>
             <?php endif; ?>
 
+            <?php if ( get_transient( 'es_tcg_locker_url_notice' ) ) : delete_transient( 'es_tcg_locker_url_notice' ); ?>
+                <div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'TCG Locker API URL was rejected — it must be a full URL whose path ends exactly in /api/v1 (e.g. https://sandbox.api-pudo.co.za/api/v1). The previous value was kept.', 'erpnext-shipping' ); ?></p></div>
+            <?php endif; ?>
+
             <!-- Stock Sync Status -->
             <div class="card" style="max-width:800px; margin-bottom:20px; padding:15px 20px;">
                 <h2 style="margin-top:0;"><?php esc_html_e( 'Stock Sync Status', 'erpnext-shipping' ); ?></h2>
@@ -440,6 +472,33 @@ class ES_Admin_Page {
                         <td><label><input type="checkbox" name="mds_enabled" id="mds_enabled" value="1" <?php checked( $v( 'mds_enabled', 'no' ), 'yes' ); ?>> <?php esc_html_e( 'Enable MDS Collivery rates', 'erpnext-shipping' ); ?></label></td>
                     </tr>
                     <?php $this->render_password_row( 'mds_api_token', __( 'API Token', 'erpnext-shipping' ), $v( 'mds_api_token' ) ); ?>
+                </table>
+
+                <!-- TCG Locker (PUDO) — Locker-to-Locker MVP. Default-disabled, sandbox-first. -->
+                <h2><?php esc_html_e( 'TCG Locker (beta)', 'erpnext-shipping' ); ?></h2>
+                <table class="form-table">
+                    <tr>
+                        <th><label for="tcg_locker_enabled"><?php esc_html_e( 'Enable', 'erpnext-shipping' ); ?></label></th>
+                        <td><label><input type="checkbox" name="tcg_locker_enabled" id="tcg_locker_enabled" value="1" <?php checked( $v( 'tcg_locker_enabled', 'no' ), 'yes' ); ?>> <?php esc_html_e( 'Enable TCG Locker (Locker-to-Locker) delivery', 'erpnext-shipping' ); ?></label>
+                        <p class="description"><?php esc_html_e( 'Off by default. When on, an authenticated destination locker must be selected at checkout before a rate is quoted. Sandbox URL by default — set the production URL explicitly only when authorised.', 'erpnext-shipping' ); ?></p></td>
+                    </tr>
+                    <?php $this->render_text_row( 'tcg_locker_api_url', __( 'API Base URL', 'erpnext-shipping' ), $v( 'tcg_locker_api_url', ES_TCG_LOCKER_SANDBOX_BASE ) ); ?>
+                    <tr><th></th><td><p class="description"><?php esc_html_e( 'Must end exactly in /api/v1. Sandbox: https://sandbox.api-pudo.co.za/api/v1', 'erpnext-shipping' ); ?></p></td></tr>
+                    <?php $this->render_password_row( 'tcg_locker_api_token', __( 'API Token (Bearer)', 'erpnext-shipping' ), $v( 'tcg_locker_api_token' ) ); ?>
+                    <?php $this->render_text_row( 'tcg_locker_rate_label', __( 'Rate Label', 'erpnext-shipping' ), $v( 'tcg_locker_rate_label', __( 'TCG Locker Delivery', 'erpnext-shipping' ) ) ); ?>
+                    <tr>
+                        <th><label for="tcg_locker_pricing_mode"><?php esc_html_e( 'Pricing Mode', 'erpnext-shipping' ); ?></label></th>
+                        <td>
+                            <select name="tcg_locker_pricing_mode" id="tcg_locker_pricing_mode">
+                                <option value="live" <?php selected( $v( 'tcg_locker_pricing_mode', 'live' ), 'live' ); ?>><?php esc_html_e( 'Live — customer pays the quoted provider rate', 'erpnext-shipping' ); ?></option>
+                                <option value="fixed" <?php selected( $v( 'tcg_locker_pricing_mode' ), 'fixed' ); ?>><?php esc_html_e( 'Fixed — customer pays a fixed amount', 'erpnext-shipping' ); ?></option>
+                            </select>
+                        </td>
+                    </tr>
+                    <?php $this->render_number_row( 'tcg_locker_fixed_customer_price', __( 'Fixed Customer Price (R)', 'erpnext-shipping' ), $v( 'tcg_locker_fixed_customer_price', '0' ), __( 'Used only in Fixed pricing mode.', 'erpnext-shipping' ) ); ?>
+                    <?php $this->render_number_row( 'tcg_locker_free_shipping_threshold', __( 'Free Above (R)', 'erpnext-shipping' ), $v( 'tcg_locker_free_shipping_threshold', '0' ), __( 'TCG-Locker-specific free threshold. 0 = disabled. Independent of the doorstep free-shipping threshold.', 'erpnext-shipping' ) ); ?>
+                    <?php $this->render_text_row( 'tcg_locker_excluded_shipping_classes', __( 'Excluded Shipping Classes', 'erpnext-shipping' ), $v( 'tcg_locker_excluded_shipping_classes', '' ) ); ?>
+                    <?php $this->render_number_row( 'tcg_locker_rate_timeout', __( 'API Timeout (seconds)', 'erpnext-shipping' ), $v( 'tcg_locker_rate_timeout', '15' ) ); ?>
                 </table>
 
                 <!-- Pricing -->
@@ -791,6 +850,10 @@ class ES_Admin_Page {
                             '<p class="description" style="margin-top:4px;">List all ERPNext warehouses that ship from this location. Stock from these warehouses will be combined when determining if this location can fulfill an order.</p></div>' +
                             '<div class="es-warehouse-fields" style="' + (isCP ? 'display:none;' : '') + '"><label>SLW Term ID (optional)</label><input type="number" class="es-loc-slw-term small-text" value="' + (loc.slw_term_id || '') + '" min="0" placeholder="Optional">' +
                             '<p class="description" style="margin-top:4px;">If using Stock Locations for WooCommerce, create the location there first, then copy its term ID here. Find it under Products &gt; Stock Locations.</p></div>' +
+                            '<div class="es-full-width es-warehouse-fields" style="' + (isCP ? 'display:none;' : '') + '"><label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal;">' +
+                            '<input type="checkbox" class="es-loc-tcg-dispatch" ' + (loc.tcg_locker_dispatch_enabled ? 'checked' : '') + '> ' +
+                            '<?php esc_html_e( "TCG Locker dispatch origin (L2L)", "erpnext-shipping" ); ?>' +
+                            '</label><p class="description" style="margin-top:4px;">Allow warehouse staff to deposit orders packed here into a TCG locker for Locker-to-Locker delivery. Leave off to exclude this warehouse from TCG Locker.</p></div>' +
                             '<div style="padding-top:8px;"><label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal;">' +
                             '<input type="checkbox" name="" class="es-pickup-enabled" ' + (loc.pickup_enabled || isCP ? 'checked' : '') + (isCP ? ' disabled' : '') + '> ' +
                             '<?php esc_html_e( "Available for pickup", "erpnext-shipping" ); ?>' +
@@ -845,6 +908,7 @@ class ES_Admin_Page {
                         serviced_by: locType === 'collection_point'
                             ? $card.find('.es-cp-serviced:checked').map(function(){ return $(this).val(); }).get()
                             : [],
+                        tcg_locker_dispatch_enabled: locType === 'collection_point' ? false : $card.find('.es-loc-tcg-dispatch').is(':checked'),
                         customer_message: $card.find('.es-loc-customer-msg').val().trim(),
                     });
                 });

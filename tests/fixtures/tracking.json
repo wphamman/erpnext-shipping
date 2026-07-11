@@ -1,0 +1,6 @@
+{
+  "shipment": {
+    "status": "in-locker",
+    "waybill": "WB123456"
+  }
+}

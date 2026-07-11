@@ -1,0 +1,26 @@
+[
+  {
+    "code": "CG929",
+    "name": "Brackenfell Locker",
+    "address": "1 Main Rd",
+    "town": "Brackenfell",
+    "postcode": "7560",
+    "latitude": -33.87,
+    "longitude": 18.69,
+    "type": "locker",
+    "opening_hours": "24/7",
+    "box_sizes": ["XS", "S", "M", "L", "XL"]
+  },
+  {
+    "code": "PTA100",
+    "name": "Silverton Locker",
+    "address": "5 Pretoria St",
+    "town": "Silverton",
+    "postcode": "0184",
+    "latitude": -25.72,
+    "longitude": 28.32,
+    "type": "locker",
+    "opening_hours": "06:00-22:00",
+    "box_sizes": ["XS", "S", "M"]
+  }
+]

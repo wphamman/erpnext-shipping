@@ -1,0 +1,40 @@
+{
+  "rates": [
+    {
+      "service_level": {
+        "code": "L2LXS - ECO",
+        "name": "Locker to Locker XS",
+        "box_type": "10",
+        "box_type_name": "V4-XS",
+        "dimensions": { "length": 60, "width": 17, "height": 8, "weight": 2 }
+      },
+      "rate": 57.50,
+      "rate_excluding_vat": 50.00,
+      "rate_revision_id": "rev_xs_1"
+    },
+    {
+      "service_level": {
+        "code": "L2LL - ECO",
+        "name": "Locker to Locker L",
+        "box_type": "13",
+        "box_type_name": "V4-L",
+        "dimensions": { "length": 60, "width": 41, "height": 41, "weight": 15 }
+      },
+      "rate": 92.00,
+      "rate_excluding_vat": 80.00,
+      "rate_revision_id": "rev_l_1"
+    },
+    {
+      "service_level": {
+        "code": "L2LXL - ECO",
+        "name": "Locker to Locker XL",
+        "box_type": "14",
+        "box_type_name": "V4-XL",
+        "dimensions": { "length": 60, "width": 41, "height": 69, "weight": 20 }
+      },
+      "rate": 115.00,
+      "rate_excluding_vat": 100.00,
+      "rate_revision_id": "rev_xl_1"
+    }
+  ]
+}

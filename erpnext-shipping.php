@@ -20,6 +20,14 @@ defined( 'ABSPATH' ) || exit;
 define( 'ES_SHIPPING_VERSION', '1.12.14' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
+// TCG Locker (PUDO) — sandbox API base default. Origin is derived by stripping
+// the terminal /api/v1. Production must be set explicitly (see docs/tcg-locker-architecture.md).
+define( 'ES_TCG_LOCKER_SANDBOX_BASE', 'https://sandbox.api-pudo.co.za/api/v1' );
+
+// Isolated TCG Locker API client. No side effects at load; required early so
+// both the admin settings screen and the shipping-method flow can use it.
+require_once ES_SHIPPING_PATH . 'includes/class-es-tcg-locker-client.php';
+
 // Declare HPOS (High-Performance Order Storage) compatibility. The plugin already
 // uses HPOS-safe order APIs (wc_get_order, $order->get_meta, feature-detected order
 // list columns); this declaration stops WooCommerce flagging it as "incompatible"
@@ -76,6 +84,71 @@ function es_shipping_init() {
     add_filter( 'woocommerce_shipping_methods', 'es_shipping_add_method' );
 }
 add_action( 'woocommerce_shipping_init', 'es_shipping_init' );
+
+/**
+ * Read TCG Locker settings from the first configured ES shipping-method instance
+ * (settings live in woocommerce_erpnext_shipping_{id}_settings). Returns the
+ * settings array, or an empty array when no instance is configured.
+ */
+function es_tcg_locker_settings() {
+    global $wpdb;
+    $rows = $wpdb->get_col(
+        "SELECT option_value FROM {$wpdb->options} WHERE option_name LIKE 'woocommerce_erpnext_shipping_%_settings'"
+    );
+    $first = array();
+    foreach ( (array) $rows as $val ) {
+        $opts = maybe_unserialize( $val );
+        if ( ! is_array( $opts ) ) {
+            continue;
+        }
+        if ( empty( $first ) ) {
+            $first = $opts;
+        }
+        if ( isset( $opts['tcg_locker_enabled'] ) ) {
+            return $opts;
+        }
+    }
+    return $first;
+}
+
+/**
+ * Construct a configured TCG Locker client, or null when the feature is disabled
+ * or not validly configured. Default-disabled: returns null unless
+ * tcg_locker_enabled === 'yes' with a valid API base and a token.
+ *
+ * Nothing in Phase 1 calls this at runtime — checkout/quote/booking wiring lands
+ * in later phases. This is the default-disabled construction seam only.
+ *
+ * @param array|null $opts Optional pre-read settings (avoids a DB read).
+ * @return ES_TCG_Locker_Client|null
+ */
+function es_tcg_locker_client( $opts = null ) {
+    if ( null === $opts ) {
+        $opts = es_tcg_locker_settings();
+    }
+    if ( 'yes' !== ( $opts['tcg_locker_enabled'] ?? 'no' ) ) {
+        return null;
+    }
+    $base  = $opts['tcg_locker_api_url'] ?? '';
+    $token = $opts['tcg_locker_api_token'] ?? '';
+    if ( '' === (string) $token || ! ES_TCG_Locker_Client::is_valid_api_base( $base ) ) {
+        return null;
+    }
+    $timeout = (int) ( $opts['tcg_locker_rate_timeout'] ?? ES_TCG_Locker_Client::DEFAULT_TIMEOUT );
+    $logger  = function ( $level, $message ) {
+        if ( function_exists( 'wc_get_logger' ) ) {
+            wc_get_logger()->log( $level, $message, array( 'source' => 'erpnext-shipping-tcg-locker' ) );
+        }
+    };
+    return new ES_TCG_Locker_Client(
+        $base,
+        $token,
+        new ES_TCG_Locker_WP_Transport(),
+        new ES_TCG_Locker_Transient_Cache(),
+        $logger,
+        $timeout
+    );
+}
 
 /**
  * Fulfillment module — loads on init (not shipping_init).
