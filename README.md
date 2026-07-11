@@ -36,7 +36,7 @@ Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routin
 
 ### TCG Locker (PUDO) Locker-to-Locker Delivery
 - **Locker-to-locker delivery** — a first-class L2L service alongside the door carriers, built on the published TCG Locker sandbox API contract. **Default-disabled**; enable per store under WooCommerce → ERPNext Shipping → *TCG Locker*.
-- **Checkout locker selector** — dependency-free, accessible search/select of a destination locker in the classic checkout (nonce-protected AJAX; the selection lives in the session and is always re-validated server-side; no external map/CDN calls). Rate id ends in `_locker` (preserved by the free-shipping filter).
+- **Cart + checkout locker selector** — dependency-free, accessible search/select of a destination locker before the cart drop-off as well as in classic checkout (nonce-protected AJAX; the selection lives in the session and is always re-validated server-side; no external map/CDN calls). Selection invalidates WC's package cache, adds and auto-selects the real priced `_locker` shipping radio, and updates the total. Rate id ends in `_locker` (preserved by the free-shipping filter).
 - **Conservative parcel packer** — proves spatial *coexistence* of all cart items in a real locker box (extreme-point placement + overlap test, six orientations) and selects the smallest fitting box from the services the API actually returns.
 - **VAT-reconciled pricing** — live / fixed / per-service free-threshold modes; the VAT-inclusive provider rate is split so WooCommerce applies exactly one 15% shipping tax. Fails closed on a malformed/missing price — never a free or negative locker rate.
 - **Manual, idempotent booking** — a guarded order-panel "Book TCG Locker Shipment" action (capability + per-order nonce + atomic ownership-token mutex with an immutable lease + durable duplicate/in-progress guard + full pre-book re-validation + fresh cache-bypassing drift refusal). **Never auto-books.** An inconclusive attempt becomes an *ambiguous* state that blocks re-booking until an operator reconciles against the TCG portal.
@@ -146,7 +146,7 @@ Pickup reminder emails are WC email templates — customize subject, heading, an
 In **WooCommerce → ERPNext Shipping → TCG Locker** (default **disabled**):
 
 - **Enable** — turn the feature on for this instance. Settings resolve globally from the first enabled instance, so credentials/environment can't disagree across zones.
-- **API Base URL** — must end exactly in `/api/v1` (validated). Sandbox: `https://sandbox.api-pudo.co.za/api/v1`. The production base is **unproven** — verify before use (see `docs/tcg-locker-architecture.md`).
+- **API Base URL** — must end exactly in `/api/v1` (validated). Sandbox: `https://sandbox.api-pudo.co.za/api/v1`. Production: `https://api-pudo.co.za/api/v1` (verified with authenticated read-only locker/shipment calls and an L2L quote-only request on 2026-07-11).
 - **API Token** — Bearer token (write-only field; blank submit keeps the stored value).
 - **Pricing mode** — `live` (customer pays the provider rate), `fixed` (flat customer price), or a per-service **free-shipping threshold**. All reconcile to a single 15% shipping tax.
 - **Excluded shipping classes** — cart lines in these classes make the order locker-ineligible (separate from the door `heavy-items` free-shipping exclusion).

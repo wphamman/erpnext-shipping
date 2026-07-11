@@ -14,16 +14,19 @@ the feature.
 - At least one **warehouse** location with **"TCG Locker dispatch origin (L2L)"** ticked.
 - A 15% shipping-taxable tax setup (to verify VAT reconciliation).
 
-## Phase 3 — checkout selection & rates
+## Phase 3 — cart/checkout selection & rates
 
-1. **Selector appears, no fake rate.** Add an in-stock, locker-eligible product; go to
-   checkout. Under the shipping methods you should see the **"TCG Locker"** row with
-   **"Choose a TCG Locker for cheaper delivery"** and a search box. There is **no**
-   zero-cost TCG Locker rate yet.
+1. **Cart selector appears, no fake rate.** Add an in-stock, locker-eligible product; go to
+   the classic cart. Under the shipping methods you should see **"TCG Locker delivery"**
+   with **"Choose a locker to see the exact price"** and a search box. There is no
+   zero-cost placeholder rate.
 2. **Search.** Type a town/postcode/name → results list (name, address, box sizes, hours).
    No external map/CDN requests (check the network tab: only `admin-ajax.php`).
-3. **Select → rate appears.** Click a locker → checkout recalculates → a **"TCG Locker
-   Delivery — <locker>"** rate appears, id ending `_locker`, showing Locker + Box meta.
+3. **Select → priced radio appears and is chosen.** Click a locker → cart recalculates → a
+   **"TCG Locker Delivery — <locker>"** rate appears among the normal shipping radios,
+   id ending `_locker`, with its price visible and the radio selected automatically. The
+   total must update. Proceed to checkout: the same locker/rate stays selected and
+   change/remove controls render beneath the rate.
 4. **VAT reconciliation (15% store).** The rate's displayed total (incl. tax) equals the
    sandbox provider `rate` (VAT-inclusive) within rounding; exactly one tax line; no double
    tax. Cross-check against `_es_tcg_locker_provider_rate` on the order later.
@@ -112,9 +115,10 @@ With a booked sandbox order (status `booked`, a real tracking reference):
 Do these deliberately, in order, on the live site:
 
 - [ ] Confirm sandbox UAT above passed on staging.
-- [ ] Set the **production** API base + token in WooCommerce → ERPNext Shipping → *TCG
-      Locker* (production base is **unproven/frontend-observed** — verify it before use;
-      see `docs/tcg-locker-architecture.md`). Token fields are write-only.
+- [ ] Set the **production** API base `https://api-pudo.co.za/api/v1` + live token in
+      WooCommerce → ERPNext Shipping → *TCG Locker*. This base was verified on 2026-07-11
+      with authenticated read-only locker/shipment calls and a quote-only L2L `/rates` call.
+      Token fields are write-only.
 - [ ] Flag the correct **warehouse** location(s) as TCG Locker dispatch origins.
 - [ ] Confirm shipping is taxable at 15% (or set a shipping tax class) so VAT reconciles.
 - [ ] Enable **TCG Locker** (`tcg_locker_enabled = yes`) on the intended ES instance.

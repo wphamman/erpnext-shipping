@@ -38,6 +38,21 @@ class ES_TCG_Locker_Rate {
 	/** Store VAT rate used to split the provider's VAT-inclusive rate. */
 	const VAT_RATE = 0.15;
 
+	/** Is this the plugin's dedicated locker rate id? */
+	public static function is_locker_rate_id( $rate_id ) {
+		return is_string( $rate_id ) && strlen( $rate_id ) >= 7 && '_locker' === substr( $rate_id, -7 );
+	}
+
+	/** Return the first locker rate id from a rate-id list, or null. */
+	public static function find_locker_rate_id( $rate_ids ) {
+		foreach ( (array) $rate_ids as $rate_id ) {
+			if ( self::is_locker_rate_id( $rate_id ) ) {
+				return $rate_id;
+			}
+		}
+		return null;
+	}
+
 	/**
 	 * Compute the customer charge for a chosen offer.
 	 *

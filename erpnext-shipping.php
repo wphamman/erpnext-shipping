@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.13.0
+ * Version: 1.13.1
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Requires at least: 6.0
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.13.0' );
+define( 'ES_SHIPPING_VERSION', '1.13.1' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // TCG Locker (PUDO) — sandbox API base default. Origin is derived by stripping
@@ -187,7 +187,7 @@ function es_fulfillment_init() {
 
     require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-statuses.php';
 
-    // TCG Locker checkout selector — loads in BOTH modes (independent of the
+    // TCG Locker cart/checkout selector — loads in BOTH modes (independent of the
     // fulfillment mode); self-gates on the client being enabled + configured.
     require_once ES_SHIPPING_PATH . 'includes/class-es-tcg-locker-checkout.php';
     ES_TCG_Locker_Checkout::init();

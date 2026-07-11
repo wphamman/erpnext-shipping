@@ -18,6 +18,20 @@ $OFFER = array(
 	'rate_revision_id'   => 'rev_l_1',
 );
 
+es_test( 'locker rate ids are found precisely for cart/checkout auto-selection', function () {
+	es_ok( ES_TCG_Locker_Rate::is_locker_rate_id( 'erpnext_shipping_locker' ), 'dedicated locker id recognised' );
+	es_ok( ES_TCG_Locker_Rate::is_locker_rate_id( 'erpnext_shipping:49_locker' ), 'instance-qualified locker id recognised' );
+	es_ok( ! ES_TCG_Locker_Rate::is_locker_rate_id( 'erpnext_shipping:49' ), 'door rate is not locker' );
+	es_ok( ! ES_TCG_Locker_Rate::is_locker_rate_id( '_locker_extra' ), 'suffix must be exact' );
+	es_ok( ! ES_TCG_Locker_Rate::is_locker_rate_id( null ), 'non-string fails closed' );
+	es_eq(
+		'erpnext_shipping_locker',
+		ES_TCG_Locker_Rate::find_locker_rate_id( array( 'flat_rate:1', 'erpnext_shipping_locker', 'local_pickup:2' ) ),
+		'first locker rate selected from package ids'
+	);
+	es_eq( null, ES_TCG_Locker_Rate::find_locker_rate_id( array( 'flat_rate:1', 'local_pickup:2' ) ), 'no locker rate returns null' );
+} );
+
 es_test( 'live pricing: customer pays provider incl; ex-VAT cost reconciles at 15%', function () use ( $OFFER ) {
 	$p = ES_TCG_Locker_Rate::compute_pricing( $OFFER, 'live', 0, 0, 500 );
 	es_ok( ! empty( $p['ok'] ), 'pricing ok' );

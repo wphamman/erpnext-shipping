@@ -96,8 +96,8 @@ classic-checkout compatibility; current mobile + desktop checkout behaviour.
 |---|---|---|
 | **Sandbox origin** (default) | `https://sandbox.api-pudo.co.za` | Documented sandbox host. |
 | Sandbox API base | `https://sandbox.api-pudo.co.za/api/v1` | `/api/v1` for data/rates/shipments/tracking. |
-| Production origin | `https://api-tcg.co.za` **(unproven)** | Observed on `customer.tcglocker.co.za` frontend only. **Do not treat as proven.** Verify with TCG or an authorised read-only `GET /api/v1/lockers-data` before any production work. |
-| Production API base | `https://api-tcg.co.za/api/v1` **(unproven)** | Same caveat. |
+| Production origin | `https://api-pudo.co.za` | Verified 2026-07-11: authenticated `GET /api/v1/lockers-data` returned the live catalogue and a quote-only L2L `/rates` request returned five services. |
+| Production API base | `https://api-pudo.co.za/api/v1` | Verified with the live credential; no shipment was created. |
 
 **One setting, deterministic derivation (no contradiction).** There is a **single** stored
 setting, `tcg_locker_api_url`, holding the **API base** (e.g.
@@ -311,25 +311,25 @@ The pickup selector supplies the reusable seam conventions
 - nonce `es_checkout_pickup` (L127/L403); AJAX `es_save_checkout_pickup` registered for
   **both** `wp_ajax_` and `wp_ajax_nopriv_` (L450–L451).
 
-**Render seam — corrected.** The pickup selector renders on `woocommerce_after_shipping_rate`
-(L13), which only fires **beneath an existing rate**. The locker selector must appear
-**before** any `_locker` rate exists (requirement 3), so it **cannot** use that hook as its
-entry point. The locker selector's primary placement is the classic-checkout review-table
-action **`woocommerce_review_order_after_shipping`**, which fires inside
-`checkout/review-order.php` immediately after the shipping rows on every checkout AJAX
-refresh, regardless of whether any locker rate is present. That control renders either:
+**Render seam — cart + checkout correction (v1.13.1).** The pickup selector renders on
+`woocommerce_after_shipping_rate`, which only fires **beneath an existing rate**. The locker
+selector must appear **before** any `_locker` rate exists, so its initial prompt uses both
+**`woocommerce_cart_totals_after_shipping`** (classic cart, before the primary funnel
+drop-off) and **`woocommerce_review_order_after_shipping`** (classic checkout). The prompt
+renders:
 
-- the **"Choose a TCG Locker for cheaper delivery"** prompt (no locker selected yet), or
-- the selected-locker summary + a **"Change locker"** control (locker selected).
+- **"Choose a locker to see the exact price"** while no locker is selected; or
+- the selected-locker summary plus an explicit unavailable message if no real rate can be
+  produced for that cart.
 
-**Recalculation.** After the select/clear AJAX persists the choice to session, the plugin JS
-triggers WooCommerce's standard classic-checkout recalculation with
-`jQuery(document.body).trigger('update_checkout')`, which re-runs `calculate_shipping()` and
-re-renders the review table (and thus the selector) via the same hook. Optionally, once a
-`_locker` rate exists, a compact "Change locker" affordance may **also** render beneath it via
-`woocommerce_after_shipping_rate` on the `_locker` rate id — but that is secondary; the
-`woocommerce_review_order_after_shipping` control is the authoritative, always-present entry
-point. (Blocks checkout is out of scope — this uses classic-checkout hooks only.)
+**Recalculation and real rate selection.** Locker session state is not part of WC's shipping
+package hash. Select/remove therefore explicitly deletes each `shipping_for_package_*` cache
+before recalculating; otherwise WC reuses the pre-selection door rates indefinitely. When a
+real `_locker` rate is produced, it is written into `chosen_shipping_methods`, so it becomes
+the actual selected WC radio, shows its price, and updates the total. The prompt then moves
+beneath that rate via `woocommerce_after_shipping_rate`, carrying compact Change/Remove
+controls. Cart refreshes after selection; checkout triggers `update_checkout`. Blocks remain
+out of scope.
 
 TCG Locker session/nonce/AJAX: session `es_tcg_locker_selection`, nonce `es_checkout_locker`,
 AJAX actions `es_tcg_locker_search` + `es_tcg_locker_select` (priv + nopriv).
@@ -814,8 +814,9 @@ diagnostics quote log (`ES_Quote_Log`) under a `tcg-locker` slug (Phase 1/5), po
 
 ## 16. Unresolved provider questions (resolve in Phase 1 against sandbox fixtures)
 
-1. **Production origin** — is `https://api-tcg.co.za` correct? Verify with TCG or an
-   authorised read-only `GET /api/v1/lockers-data`. Default stays sandbox until proven.
+1. **Production origin — resolved 2026-07-11:** `https://api-pudo.co.za` (API base
+   `https://api-pudo.co.za/api/v1`). Authenticated locker/shipment reads and an L2L quote-only
+   request succeeded; `api-tcg.co.za` is not the unified locker/rates base.
 2. **Exact `/rates` response field names** — service name, box type, box dimensions, box max
    weight, `rate_revision_id`. Capture a sandbox fixture.
 3. **`/shipments` response** — exact keys for shipment id and tracking/waybill reference.

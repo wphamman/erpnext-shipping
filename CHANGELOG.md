@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-07-11
+
+### Fixed
+- **Selecting a locker could never reveal its priced shipping rate.** WooCommerce's shipping-package cache does not include the TCG locker session selection, so recalculation reused the pre-selection door rates indefinitely. Locker select/remove now explicitly invalidates each package cache before recalculating; a newly available `_locker` rate is automatically selected as the real WooCommerce shipping method and updates the order total.
+- **TCG Locker looked like an unrelated checkout field instead of a delivery choice.** The locker chooser now appears on the classic cart—before the largest funnel drop-off—as well as checkout. Before selection it explains that choosing a locker reveals the exact price; afterwards the real priced Locker radio appears among the other shipping methods, is selected automatically, and carries the change/remove controls beneath it.
+
+### Changed
+- **Verified production API base:** `https://api-pudo.co.za/api/v1`. Authenticated read-only production checks returned the live locker catalogue and shipments; an L2L quote-only request returned the five live XS–XL services. No shipment was created during verification.
+
 ## [1.13.0] - 2026-07-11
 
 ### Added
