@@ -1,8 +1,9 @@
 <?php
 /**
  * Tests for ES_TCG_Locker_Booking (Phase 4) — the pure guard rails around the
- * manual, idempotent booking action: pre-flight guard, fresh-rate drift, and the
- * booked/failed/AMBIGUOUS classification of a create_shipment() result.
+ * manual, idempotent booking action: pre-flight guard (incl. durable in-progress
+ * and ambiguous locks), fail-closed fresh-rate drift, and the
+ * booked/error/AMBIGUOUS classification of a create_shipment() result.
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -22,21 +23,33 @@ $FRESH_MATCH = array(
 	array( 'service_code' => 'L2LXL - ECO', 'box_code' => '14', 'rate' => 115.0, 'rate_revision_id' => 'rev_xl_1' ),
 );
 
-es_test( 'guard: fresh order can book; booked id and ambiguous state both block', function () {
+es_test( 'guard: fresh order can book; booked id, in-progress and ambiguous all block', function () {
 	$g = ES_TCG_Locker_Booking::guard( '', ES_TCG_Locker_Booking::STATE_NONE );
 	es_ok( $g['can'], 'no shipment id, no prior state → can book' );
+	es_ok( ES_TCG_Locker_Booking::guard( '', '' )['can'], 'empty status treated as none → can book' );
 
 	$g2 = ES_TCG_Locker_Booking::guard( 'SHP-1001', ES_TCG_Locker_Booking::STATE_BOOKED );
 	es_ok( ! $g2['can'], 'existing shipment id → blocked (duplicate guard)' );
 	es_eq( 'already_booked', $g2['reason'], 'reason already_booked' );
 
-	// A stored shipment id blocks regardless of the recorded state.
 	$g3 = ES_TCG_Locker_Booking::guard( 'SHP-1001', ES_TCG_Locker_Booking::STATE_NONE );
-	es_ok( ! $g3['can'], 'shipment id alone blocks even with empty state' );
+	es_ok( ! $g3['can'], 'shipment id alone blocks even with none status' );
 
-	$g4 = ES_TCG_Locker_Booking::guard( '', ES_TCG_Locker_Booking::STATE_AMBIGUOUS );
-	es_ok( ! $g4['can'], 'ambiguous prior attempt → blocked (no auto-retry)' );
-	es_eq( 'ambiguous_locked', $g4['reason'], 'reason ambiguous_locked' );
+	// A durable in-progress marker (crash mid-call) hard-blocks re-book.
+	$g4 = ES_TCG_Locker_Booking::guard( '', ES_TCG_Locker_Booking::STATE_BOOKING );
+	es_ok( ! $g4['can'], 'in-progress booking → blocked (no silent re-book)' );
+	es_eq( 'in_progress_locked', $g4['reason'], 'reason in_progress_locked' );
+
+	$g5 = ES_TCG_Locker_Booking::guard( '', ES_TCG_Locker_Booking::STATE_AMBIGUOUS );
+	es_ok( ! $g5['can'], 'ambiguous prior attempt → blocked (no auto-retry)' );
+	es_eq( 'ambiguous_locked', $g5['reason'], 'reason ambiguous_locked' );
+
+	// An error state is recoverable — booking is allowed again.
+	es_ok( ES_TCG_Locker_Booking::guard( '', ES_TCG_Locker_Booking::STATE_ERROR )['can'], 'error state → can retry' );
+
+	es_ok( ES_TCG_Locker_Booking::is_blocking_status( ES_TCG_Locker_Booking::STATE_BOOKING ), 'booking is blocking' );
+	es_ok( ES_TCG_Locker_Booking::is_blocking_status( ES_TCG_Locker_Booking::STATE_AMBIGUOUS ), 'ambiguous is blocking' );
+	es_ok( ! ES_TCG_Locker_Booking::is_blocking_status( ES_TCG_Locker_Booking::STATE_ERROR ), 'error is not blocking' );
 } );
 
 es_test( 'classify_result: a real shipment id is BOOKED', function () {
@@ -71,14 +84,22 @@ es_test( 'classify_result: transport / timeout / 5xx / unparseable-2xx are AMBIG
 	}
 } );
 
-es_test( 'classify_result: definite client rejection (missing args / HTTP 4xx) is FAILED (retry ok)', function () {
+es_test( 'classify_result: ambiguity-sensitive 4xx (408/409/429) are AMBIGUOUS, not retryable', function () {
+	foreach ( array( 408, 409, 429 ) as $code ) {
+		$o = ES_TCG_Locker_Booking::classify_result( array( 'ok' => false, 'error' => 'http', 'code' => $code ) );
+		es_eq( ES_TCG_Locker_Booking::STATE_AMBIGUOUS, $o['state'], "HTTP $code → ambiguous (request may have been processed)" );
+		es_eq( 'http_' . $code, $o['error'], "error http_$code" );
+	}
+} );
+
+es_test( 'classify_result: definite client rejection (missing args / other HTTP 4xx) is ERROR (retry ok)', function () {
 	$o1 = ES_TCG_Locker_Booking::classify_result( array( 'ok' => false, 'error' => 'missing_args' ) );
-	es_eq( ES_TCG_Locker_Booking::STATE_FAILED, $o1['state'], 'missing_args → failed' );
+	es_eq( ES_TCG_Locker_Booking::STATE_ERROR, $o1['state'], 'missing_args → error' );
 	es_eq( 'missing_args', $o1['error'], 'error carried' );
 
 	foreach ( array( 400, 401, 403, 404, 422 ) as $code ) {
 		$o = ES_TCG_Locker_Booking::classify_result( array( 'ok' => false, 'error' => 'http', 'code' => $code ) );
-		es_eq( ES_TCG_Locker_Booking::STATE_FAILED, $o['state'], "HTTP $code → failed" );
+		es_eq( ES_TCG_Locker_Booking::STATE_ERROR, $o['state'], "HTTP $code → error" );
 		es_eq( 'http_' . $code, $o['error'], "error http_$code" );
 	}
 } );
@@ -94,20 +115,40 @@ es_test( 'detect_drift: no fresh quote refuses (cannot certify price)', function
 	es_eq( 'no_fresh_quote', $d['reason'], 'reason no_fresh_quote' );
 } );
 
+es_test( 'detect_drift: FAILS CLOSED on an incomplete snapshot (missing box or price)', function () use ( $FRESH_MATCH ) {
+	// Only a service code — the classic fail-open case. Must refuse.
+	$only_service = array( ES_TCG_Locker_Rate::M_SERVICE_CODE => 'L2LL - ECO' );
+	$d1 = ES_TCG_Locker_Booking::detect_drift( $only_service, $FRESH_MATCH );
+	es_ok( $d1['drift'], 'service-only snapshot → drift (no silent pass)' );
+	es_eq( 'incomplete_snapshot', $d1['reason'], 'reason incomplete_snapshot (missing box)' );
+
+	// Service + box but a non-numeric price.
+	$no_price = array(
+		ES_TCG_Locker_Rate::M_SERVICE_CODE  => 'L2LL - ECO',
+		ES_TCG_Locker_Rate::M_BOX_CODE      => '13',
+		ES_TCG_Locker_Rate::M_PROVIDER_RATE => '',
+	);
+	$d2 = ES_TCG_Locker_Booking::detect_drift( $no_price, $FRESH_MATCH );
+	es_ok( $d2['drift'], 'missing price → drift' );
+	es_eq( 'incomplete_snapshot', $d2['reason'], 'reason incomplete_snapshot (missing price)' );
+} );
+
+es_test( 'detect_drift: a fresh offer without a numeric price refuses', function () use ( $SNAP ) {
+	$d = ES_TCG_Locker_Booking::detect_drift( $SNAP, array( array( 'service_code' => 'L2LL - ECO', 'box_code' => '13', 'rate' => null, 'rate_revision_id' => 'rev_l_1' ) ) );
+	es_ok( $d['drift'], 'fresh offer with no numeric price → drift' );
+	es_eq( 'no_fresh_price', $d['reason'], 'reason no_fresh_price' );
+} );
+
 es_test( 'detect_drift: service gone, box changed, revision changed, price moved all drift', function () use ( $SNAP ) {
-	// Service no longer offered.
 	$d1 = ES_TCG_Locker_Booking::detect_drift( $SNAP, array( array( 'service_code' => 'L2LXL - ECO', 'box_code' => '14', 'rate' => 115.0 ) ) );
 	es_eq( 'service_unavailable', $d1['reason'], 'service_unavailable' );
 
-	// Same service, different box id.
 	$d2 = ES_TCG_Locker_Booking::detect_drift( $SNAP, array( array( 'service_code' => 'L2LL - ECO', 'box_code' => '99', 'rate' => 92.0, 'rate_revision_id' => 'rev_l_1' ) ) );
 	es_eq( 'box_changed', $d2['reason'], 'box_changed' );
 
-	// Same service/box, new revision.
 	$d3 = ES_TCG_Locker_Booking::detect_drift( $SNAP, array( array( 'service_code' => 'L2LL - ECO', 'box_code' => '13', 'rate' => 92.0, 'rate_revision_id' => 'rev_l_2' ) ) );
 	es_eq( 'revision_changed', $d3['reason'], 'revision_changed' );
 
-	// Same service/box/revision, price moved beyond a cent.
 	$d4 = ES_TCG_Locker_Booking::detect_drift( $SNAP, array( array( 'service_code' => 'L2LL - ECO', 'box_code' => '13', 'rate' => 99.0, 'rate_revision_id' => 'rev_l_1' ) ) );
 	es_eq( 'price_changed', $d4['reason'], 'price_changed' );
 } );

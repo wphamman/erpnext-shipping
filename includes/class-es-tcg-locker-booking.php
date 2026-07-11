@@ -5,14 +5,20 @@
  *
  * Kept free of WordPress/WooCommerce runtime dependencies so the guard rails
  * around a money-spending, non-idempotent provider call can be unit-tested:
- *   - the pre-flight guard (duplicate-book + ambiguous-lock),
- *   - fresh-rate drift detection against the persisted checkout quote,
+ *   - the pre-flight guard (duplicate-book + in-progress + ambiguous lock),
+ *   - fresh-rate drift detection against the persisted checkout quote
+ *     (fail-CLOSED: a snapshot missing box/price cannot certify, so it drifts),
  *   - and — most importantly — the classification of a create_shipment() result
- *     into booked / failed / AMBIGUOUS, where ambiguous means "the provider may
- *     already hold a shipment; never auto-retry".
+ *     into booked / error / AMBIGUOUS, where ambiguous means "the provider may
+ *     already hold a shipment; never auto-retry". Ambiguity-sensitive 4xx
+ *     (408/409/429) are ambiguous, not retryable errors.
  *
- * The WP-facing glue (nonce, capability, mutex, order I/O, label proxy) lives in
- * ES_TCG_Locker_Admin and calls into here.
+ * Meta key + state-value names follow the locked architecture contract
+ * (docs/tcg-locker-architecture.md §5.x): `_es_tcg_locker_booking_status` with
+ * values none|booking|booked|ambiguous|error, and `_es_tcg_locker_booked_ts`.
+ *
+ * The WP-facing glue (nonce, capability, mutex, order I/O, validation, tracking
+ * item, label proxy) lives in ES_TCG_Locker_Admin and calls into here.
  *
  * @package ERPNext_Shipping
  */
@@ -23,41 +29,57 @@ class ES_TCG_Locker_Booking {
 
 	// Order-level meta keys recording the BOOKING OUTCOME. Distinct from the
 	// shipping-item quote snapshot keys on ES_TCG_Locker_Rate (M_SERVICE_CODE …),
-	// which are written at checkout and read back here to book from.
-	const M_SHIPMENT_ID   = '_es_tcg_locker_shipment_id';
-	const M_TRACKING_REF  = '_es_tcg_locker_tracking_ref';
-	const M_BOOKING_STATE = '_es_tcg_locker_booking_state';
-	const M_BOOKED_AT     = '_es_tcg_locker_booked_at';
-	const M_LAST_ERROR    = '_es_tcg_locker_last_error';
+	// which are written at checkout and read back here to book from. Names are
+	// fixed by the contract so the Phase-5 poll-selection query can match them.
+	const M_SHIPMENT_ID    = '_es_tcg_locker_shipment_id';
+	const M_TRACKING_REF   = '_es_tcg_locker_tracking_ref';
+	const M_BOOKING_STATUS = '_es_tcg_locker_booking_status';
+	const M_BOOKED_TS      = '_es_tcg_locker_booked_ts';
+	const M_LAST_ERROR     = '_es_tcg_locker_last_error';
 
-	// Booking states.
-	const STATE_NONE      = '';
+	// Booking states (contract values).
+	const STATE_NONE      = 'none';
+	const STATE_BOOKING   = 'booking';   // Durable in-progress — set BEFORE the call.
 	const STATE_BOOKED    = 'booked';
-	const STATE_FAILED    = 'failed';    // Definite failure — safe to correct and re-book.
 	const STATE_AMBIGUOUS = 'ambiguous'; // Provider may hold a shipment — NEVER auto-retry.
+	const STATE_ERROR     = 'error';     // Definite failure — safe to correct and re-book.
 
 	/** Provider (VAT-inclusive) rate drift tolerance, in ZAR. */
 	const PRICE_EPSILON = 0.01;
 
+	/** 4xx statuses where the request may still have been accepted/processed. */
+	private static $ambiguous_http = array( 408, 409, 429 );
+
 	/**
 	 * Pre-flight guard: may this order be booked right now?
 	 *
-	 * A stored shipment id is the durable duplicate-book backstop (survives even
-	 * a lost mutex). An ambiguous prior attempt hard-blocks any further automatic
-	 * booking — a human must reconcile against the TCG portal first.
+	 * A stored shipment id is the durable duplicate-book backstop. An in-progress
+	 * ('booking') state left behind by a crash mid-call, or an ambiguous prior
+	 * attempt, both hard-block any further automatic booking — a human reconciles
+	 * against the TCG portal and clears the state first.
+	 *
+	 * An empty status (never booked) is treated the same as STATE_NONE.
 	 *
 	 * @param string $existing_shipment_id Persisted shipment id ('' if none).
-	 * @param string $existing_state       Persisted booking state.
+	 * @param string $existing_status      Persisted booking status.
 	 * @return array{can:bool, reason:string}
 	 */
-	public static function guard( $existing_shipment_id, $existing_state ) {
+	public static function guard( $existing_shipment_id, $existing_status ) {
 		if ( '' !== (string) $existing_shipment_id ) {
 			return array( 'can' => false, 'reason' => 'already_booked' );
 		}
-		if ( self::STATE_AMBIGUOUS === (string) $existing_state ) {
+		if ( self::STATE_BOOKING === (string) $existing_status ) {
+			return array( 'can' => false, 'reason' => 'in_progress_locked' );
+		}
+		if ( self::STATE_AMBIGUOUS === (string) $existing_status ) {
 			return array( 'can' => false, 'reason' => 'ambiguous_locked' );
 		}
 		return array( 'can' => true, 'reason' => '' );
+	}
+
+	/** A status that hard-blocks re-booking until a human clears it. */
+	public static function is_blocking_status( $status ) {
+		return in_array( (string) $status, array( self::STATE_BOOKING, self::STATE_AMBIGUOUS ), true );
 	}
 
 	/**
@@ -66,7 +88,8 @@ class ES_TCG_Locker_Booking {
 	 *
 	 *   - ok + shipment id            → BOOKED.
 	 *   - ok but no id                → AMBIGUOUS (never a silent success).
-	 *   - definite client rejection   → FAILED (missing args, HTTP 4xx) — retry OK.
+	 *   - HTTP 408/409/429            → AMBIGUOUS (request may have been processed).
+	 *   - other definite rejection    → ERROR (missing args, other HTTP 4xx) — retry OK.
 	 *   - transport / timeout / 5xx / → AMBIGUOUS — the request may have reached the
 	 *     unparseable 2xx (shape/decode)  provider and created a shipment, so the
 	 *                                     action must NOT auto-retry; a human checks
@@ -90,13 +113,20 @@ class ES_TCG_Locker_Booking {
 		$err  = (string) ( $result['error'] ?? 'unknown' );
 		$code = (int) ( $result['code'] ?? 0 );
 
-		// Definite client-side failures — the request was rejected before any
-		// shipment could exist, so a corrected retry is safe.
-		if ( 'missing_args' === $err ) {
-			return self::state( self::STATE_FAILED, '', '', $err );
-		}
 		if ( 'http' === $err && $code >= 400 && $code < 500 ) {
-			return self::state( self::STATE_FAILED, '', '', 'http_' . $code );
+			// Ambiguity-sensitive 4xx: 408 Request Timeout / 409 Conflict (a
+			// duplicate may already exist) / 429 Too Many Requests (the request may
+			// have been processed before the limiter tripped). These are NOT safe to
+			// auto-retry. Every other 4xx is a definite client-side rejection.
+			if ( in_array( $code, self::$ambiguous_http, true ) ) {
+				return self::state( self::STATE_AMBIGUOUS, '', '', 'http_' . $code );
+			}
+			return self::state( self::STATE_ERROR, '', '', 'http_' . $code );
+		}
+
+		// Definite client-side failure — rejected before any shipment could exist.
+		if ( 'missing_args' === $err ) {
+			return self::state( self::STATE_ERROR, '', '', $err );
 		}
 
 		// Everything else is ambiguous: transport error, timeout, HTTP 5xx, or a
@@ -106,9 +136,10 @@ class ES_TCG_Locker_Booking {
 	}
 
 	/**
-	 * Has the live quote drifted from the quote persisted at checkout? Refuses the
-	 * booking (drift=true) whenever we cannot re-confirm the exact same service,
-	 * box, revision and price the customer was charged.
+	 * Has the live quote drifted from the quote persisted at checkout? Fail-CLOSED:
+	 * returns drift=true whenever we cannot re-confirm the EXACT same service, box
+	 * and price the customer was charged — including when the persisted snapshot is
+	 * incomplete or the fresh offer lacks a comparable box/price.
 	 *
 	 * @param array $persisted    Shipping-item meta snapshot (ES_TCG_Locker_Rate::M_* keys).
 	 * @param array $fresh_offers Offers from a FORCE-REFRESHED get_rates() (cache bypassed).
@@ -121,6 +152,14 @@ class ES_TCG_Locker_Booking {
 		if ( '' === $svc ) {
 			return array( 'drift' => true, 'reason' => 'no_persisted_service' );
 		}
+		// The snapshot MUST carry the box and a numeric price to certify against —
+		// otherwise the comparison would silently pass (fail open). Refuse.
+		$p_box  = (string) ( $persisted[ ES_TCG_Locker_Rate::M_BOX_CODE ] ?? '' );
+		$p_rate = $persisted[ ES_TCG_Locker_Rate::M_PROVIDER_RATE ] ?? null;
+		if ( '' === $p_box || ! is_numeric( $p_rate ) ) {
+			return array( 'drift' => true, 'reason' => 'incomplete_snapshot' );
+		}
+
 		if ( ! is_array( $fresh_offers ) || empty( $fresh_offers ) ) {
 			// No confirmable live quote → cannot certify the price → refuse.
 			return array( 'drift' => true, 'reason' => 'no_fresh_quote' );
@@ -138,10 +177,15 @@ class ES_TCG_Locker_Booking {
 		}
 
 		// The packer's chosen box must still be the one offered for that service.
-		$p_box = (string) ( $persisted[ ES_TCG_Locker_Rate::M_BOX_CODE ] ?? '' );
 		$f_box = (string) ( $match['box_code'] ?? '' );
-		if ( '' !== $p_box && $p_box !== $f_box ) {
+		if ( '' === $f_box || $f_box !== $p_box ) {
 			return array( 'drift' => true, 'reason' => 'box_changed' );
+		}
+
+		// The fresh offer must carry a comparable numeric price.
+		$f_rate = $match['rate'] ?? null;
+		if ( ! is_numeric( $f_rate ) ) {
+			return array( 'drift' => true, 'reason' => 'no_fresh_price' );
 		}
 
 		// Revision id, when known on both sides, must match.
@@ -152,9 +196,7 @@ class ES_TCG_Locker_Booking {
 		}
 
 		// Provider VAT-inclusive rate must match within a cent.
-		$p_rate = $persisted[ ES_TCG_Locker_Rate::M_PROVIDER_RATE ] ?? null;
-		$f_rate = $match['rate'] ?? null;
-		if ( is_numeric( $p_rate ) && is_numeric( $f_rate ) && abs( (float) $p_rate - (float) $f_rate ) > self::PRICE_EPSILON ) {
+		if ( abs( (float) $p_rate - (float) $f_rate ) > self::PRICE_EPSILON ) {
 			return array( 'drift' => true, 'reason' => 'price_changed' );
 		}
 
