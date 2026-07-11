@@ -66,7 +66,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             ),
             'erp_api_key' => array(
                 'title' => __( 'API Key', 'erpnext-shipping' ),
-                'type'  => 'text',
+                'type'  => 'password',
             ),
             'erp_api_secret' => array(
                 'title' => __( 'API Secret', 'erpnext-shipping' ),
@@ -306,6 +306,39 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'default' => 'no',
             ),
         );
+    }
+
+    /**
+     * Render credentials as write-only fields in WooCommerce's native shipping
+     * method settings. Core's password renderer includes the stored value in the
+     * HTML, so temporarily blank it and show only a configured placeholder.
+     */
+    public function generate_password_html( $key, $data ) {
+        $had_value = array_key_exists( $key, $this->settings );
+        $value     = $had_value ? $this->settings[ $key ] : '';
+
+        $this->settings[ $key ] = '';
+        if ( '' !== (string) $value ) {
+            $data['placeholder'] = __( 'Configured — leave blank to keep', 'erpnext-shipping' );
+        }
+        $html = parent::generate_password_html( $key, $data );
+
+        if ( $had_value ) {
+            $this->settings[ $key ] = $value;
+        } else {
+            unset( $this->settings[ $key ] );
+        }
+
+        return $html;
+    }
+
+    /**
+     * Preserve an existing credential when the native WC settings form submits
+     * a blank write-only password field.
+     */
+    public function validate_password_field( $key, $value ) {
+        $value = parent::validate_password_field( $key, $value );
+        return '' === $value ? (string) $this->get_option( $key, '' ) : $value;
     }
 
     /**

@@ -156,15 +156,30 @@ class ES_Admin_Page {
         $opts = $this->get_settings();
 
         $text_fields = array(
-            'erp_url', 'erp_api_key', 'erp_api_secret',
-            'tcg_api_token', 'mds_api_token',
+            'erp_url',
             'title', 'company_name',
             'bulk_delivery_label', 'bulk_delivery_quote_label',
-            'bulk_delivery_google_api_key',
         );
         foreach ( $text_fields as $key ) {
             if ( isset( $_POST[ $key ] ) ) {
                 $opts[ $key ] = sanitize_text_field( wp_unslash( $_POST[ $key ] ) );
+            }
+        }
+
+        // Credentials are write-only in the UI. A blank submission preserves the
+        // stored value so secrets never need to be rendered back into page source.
+        $credential_fields = array(
+            'erp_api_key', 'erp_api_secret',
+            'tcg_api_token', 'mds_api_token',
+            'bulk_delivery_google_api_key',
+        );
+        foreach ( $credential_fields as $key ) {
+            if ( ! isset( $_POST[ $key ] ) ) {
+                continue;
+            }
+            $value = sanitize_text_field( wp_unslash( $_POST[ $key ] ) );
+            if ( '' !== $value ) {
+                $opts[ $key ] = $value;
             }
         }
 
@@ -403,7 +418,7 @@ class ES_Admin_Page {
                 <h2><?php esc_html_e( 'ERPNext Stock Sync', 'erpnext-shipping' ); ?></h2>
                 <table class="form-table">
                     <?php $this->render_text_row( 'erp_url', __( 'ERPNext URL', 'erpnext-shipping' ), $v( 'erp_url' ) ); ?>
-                    <?php $this->render_text_row( 'erp_api_key', __( 'API Key', 'erpnext-shipping' ), $v( 'erp_api_key' ) ); ?>
+                    <?php $this->render_password_row( 'erp_api_key', __( 'API Key', 'erpnext-shipping' ), $v( 'erp_api_key' ) ); ?>
                     <?php $this->render_password_row( 'erp_api_secret', __( 'API Secret', 'erpnext-shipping' ), $v( 'erp_api_secret' ) ); ?>
                 </table>
 
@@ -905,10 +920,13 @@ class ES_Admin_Page {
      * Helper: render a password input row.
      */
     private function render_password_row( $name, $label, $value ) {
+        $placeholder = '' !== (string) $value
+            ? __( 'Configured — leave blank to keep', 'erpnext-shipping' )
+            : '';
         ?>
         <tr>
             <th><label for="<?php echo esc_attr( $name ); ?>"><?php echo esc_html( $label ); ?></label></th>
-            <td><input type="password" name="<?php echo esc_attr( $name ); ?>" id="<?php echo esc_attr( $name ); ?>" class="regular-text" value="<?php echo esc_attr( $value ); ?>"></td>
+            <td><input type="password" name="<?php echo esc_attr( $name ); ?>" id="<?php echo esc_attr( $name ); ?>" class="regular-text" value="" placeholder="<?php echo esc_attr( $placeholder ); ?>" autocomplete="new-password"></td>
         </tr>
         <?php
     }

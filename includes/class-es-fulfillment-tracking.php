@@ -214,8 +214,20 @@ class ES_Fulfillment_Tracking {
             return false;
         }
 
-        // Check the key has the required permission level.
-        return in_array( $key->permissions, $allowed_perms, true );
+        // Match WooCommerce's normal API-key authorization boundary: the key's
+        // permission alone is not enough; its owning user must also be allowed
+        // to read/edit orders. Without this, a key assigned to a low-privilege
+        // user could access tracking data for arbitrary orders through this
+        // custom namespace.
+        if ( ! in_array( $key->permissions, $allowed_perms, true ) ) {
+            return false;
+        }
+
+        $required_capability = in_array( 'read', $allowed_perms, true )
+            ? 'read_private_shop_orders'
+            : 'edit_shop_orders';
+
+        return user_can( (int) $key->user_id, $required_capability );
     }
 
     /**

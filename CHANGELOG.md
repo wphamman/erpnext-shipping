@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Security
+- **API credentials are now write-only in both settings surfaces.** Stored ERPNext keys/secrets, carrier tokens, and the Google Distance Matrix key are no longer rendered into admin-page HTML. Blank submissions preserve the existing value instead of clearing it.
+- **Tracking REST API keys now inherit their owner's order capabilities.** A valid WooCommerce key and permission level are no longer sufficient on their own; the owning user must also be permitted to read or edit shop orders.
+
 ## [1.12.14] - 2026-07-03
 
 ### Fixed
