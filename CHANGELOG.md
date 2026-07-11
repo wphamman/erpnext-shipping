@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.13.2] - 2026-07-11
+
+### Changed
+- **Add Tracking now defaults to the carrier the customer actually selected.** The order-edit provider dropdown resolves the purchased shipping line: TCG Locker from its dedicated method/snapshot, MDS Collivery or The Courier Guy from the persisted winning `Carrier` rate metadata, and an existing saved tracking provider takes precedence. Generic tier labels never invent a carrier.
+
+### Fixed
+- **Internal Locker quote metadata flooded the admin order line.** The `_es_tcg_locker_*` booking and profitability snapshot remains persisted for code/reporting but is now registered with WooCommerce's hidden order-item metadata filter, leaving only the useful customer-facing Locker and Box rows visible.
+
 ## [1.13.1] - 2026-07-11
 
 ### Fixed

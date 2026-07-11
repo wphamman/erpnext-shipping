@@ -62,8 +62,38 @@ class ES_Fulfillment_Admin {
         // Admin CSS and JS.
         add_action( 'admin_head', array( __CLASS__, 'admin_css' ) );
 
+        // Keep the booking/quote snapshot available to code without flooding
+        // the order-item UI with internal `_es_tcg_locker_*` rows.
+        add_filter( 'woocommerce_hidden_order_itemmeta', array( __CLASS__, 'hide_internal_order_item_meta' ) );
+
         // Quick tracking modal on order list page.
         add_action( 'admin_footer', array( __CLASS__, 'render_tracking_modal' ) );
+    }
+
+    public static function hide_internal_order_item_meta( $hidden ) {
+        $locker_keys = array(
+            ES_TCG_Locker_Rate::M_DEST_CODE,
+            ES_TCG_Locker_Rate::M_DEST_NAME,
+            ES_TCG_Locker_Rate::M_DEST_ADDRESS,
+            ES_TCG_Locker_Rate::M_DEST_LAT,
+            ES_TCG_Locker_Rate::M_DEST_LNG,
+            ES_TCG_Locker_Rate::M_DISPATCH_LOC,
+            ES_TCG_Locker_Rate::M_SERVICE_CODE,
+            ES_TCG_Locker_Rate::M_SERVICE_NAME,
+            ES_TCG_Locker_Rate::M_BOX_CODE,
+            ES_TCG_Locker_Rate::M_BOX_NAME,
+            ES_TCG_Locker_Rate::M_BOX_SIZE,
+            ES_TCG_Locker_Rate::M_BOX_DIMS,
+            ES_TCG_Locker_Rate::M_BOX_MAX_WT,
+            ES_TCG_Locker_Rate::M_PACKED_WEIGHT,
+            ES_TCG_Locker_Rate::M_PROVIDER_RATE,
+            ES_TCG_Locker_Rate::M_PROVIDER_EX,
+            ES_TCG_Locker_Rate::M_CUSTOMER_CHG,
+            ES_TCG_Locker_Rate::M_REVISION_ID,
+            ES_TCG_Locker_Rate::M_QUOTE_TS,
+            ES_TCG_Locker_Rate::M_PRICING_MODE,
+        );
+        return array_values( array_unique( array_merge( (array) $hidden, $locker_keys ) ) );
     }
 
     // ── Custom Columns ──
@@ -923,6 +953,34 @@ class ES_Fulfillment_Admin {
 
     // ── Meta Box ──
 
+    /**
+     * Choose the Add Tracking provider from durable order evidence. Existing
+     * tracking wins; otherwise inspect the purchased shipping line's method and
+     * persisted Carrier/locker metadata. Falls back to the registry's first
+     * provider for legacy orders with no carrier evidence.
+     */
+    private static function default_tracking_provider( $order, $items, $providers ) {
+        for ( $i = count( (array) $items ) - 1; $i >= 0; $i-- ) {
+            $provider = ES_Fulfillment_Tracking::normalize_provider( $items[ $i ]['tracking_provider'] ?? '' );
+            if ( isset( $providers[ $provider ] ) ) {
+                return $provider;
+            }
+        }
+
+        foreach ( $order->get_items( 'shipping' ) as $shipping_item ) {
+            $method_id      = method_exists( $shipping_item, 'get_method_id' ) ? $shipping_item->get_method_id() : '';
+            $method_title   = method_exists( $shipping_item, 'get_method_title' ) ? $shipping_item->get_method_title() : '';
+            $carrier_meta   = $shipping_item->get_meta( 'Carrier', true );
+            $has_locker_meta = '' !== (string) $shipping_item->get_meta( '_es_tcg_locker_dest_code', true );
+            $provider       = ES_Fulfillment_Tracking::infer_provider_from_shipping( $method_id, $method_title, $carrier_meta, $has_locker_meta );
+            if ( isset( $providers[ $provider ] ) ) {
+                return $provider;
+            }
+        }
+
+        return array_key_first( $providers ) ?: 'custom';
+    }
+
     public static function add_meta_box() {
         $screen = wc_get_container()->get( \Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController::class )->custom_orders_table_usage_is_enabled()
             ? wc_get_page_screen_id( 'shop-order' )
@@ -951,6 +1009,7 @@ class ES_Fulfillment_Admin {
         $providers = ES_Fulfillment_Tracking::get_providers();
         $order_id  = $order->get_id();
         $status    = $order->get_status();
+        $default_provider = self::default_tracking_provider( $order, $items, $providers );
 
         $pickup_statuses  = array( 'processing-lp', 'dispatched-pickup', 'ready-pickup', 'pickup' );
         $is_pickup_order  = in_array( $status, $pickup_statuses, true );
@@ -1061,9 +1120,9 @@ class ES_Fulfillment_Admin {
                 <label><?php esc_html_e( 'Provider', 'erpnext-shipping' ); ?></label><br>
                 <select id="es-tracking-provider" style="width:100%;">
                     <?php foreach ( $providers as $slug => $data ) : ?>
-                        <option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $data['name'] ); ?></option>
+                        <option value="<?php echo esc_attr( $slug ); ?>" <?php selected( $default_provider, $slug ); ?>><?php echo esc_html( $data['name'] ); ?></option>
                     <?php endforeach; ?>
-                    <option value="custom"><?php esc_html_e( 'Custom', 'erpnext-shipping' ); ?></option>
+                    <option value="custom" <?php selected( $default_provider, 'custom' ); ?>><?php esc_html_e( 'Custom', 'erpnext-shipping' ); ?></option>
                 </select>
             </p>
 

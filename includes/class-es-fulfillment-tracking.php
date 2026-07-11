@@ -71,6 +71,40 @@ class ES_Fulfillment_Tracking {
     }
 
     /**
+     * Infer the tracking provider from one order shipping line. The checkout
+     * rate persists the winning door carrier as `Carrier`; locker orders carry
+     * their dedicated method id/meta. Returns a canonical provider slug or ''.
+     *
+     * Pure for regression coverage; the admin layer supplies WC item evidence.
+     */
+    public static function infer_provider_from_shipping( $method_id, $method_title, $carrier_meta = '', $has_locker_meta = false ) {
+        $method_id    = strtolower( trim( (string) $method_id ) );
+        $method_title = strtolower( trim( (string) $method_title ) );
+        $combined     = $method_id . ' ' . $method_title;
+
+        if (
+            $has_locker_meta
+            || ( strlen( $method_id ) >= 7 && '_locker' === substr( $method_id, -7 ) )
+            || false !== strpos( $combined, 'tcg locker' )
+            || false !== strpos( $combined, 'pudo' )
+        ) {
+            return 'tcg-locker';
+        }
+
+        $carrier = self::normalize_provider( $carrier_meta );
+        if ( isset( self::$providers[ $carrier ] ) ) {
+            return $carrier;
+        }
+        if ( false !== strpos( $combined, 'collivery' ) || preg_match( '/(^|[^a-z])mds([^a-z]|$)/', $combined ) ) {
+            return 'mds-collivery';
+        }
+        if ( false !== strpos( $combined, 'courier guy' ) || false !== strpos( $combined, 'shiplogic' ) ) {
+            return 'the-courier-guy';
+        }
+        return '';
+    }
+
+    /**
      * Return all string variants (slug + display name + aliases) that may appear
      * in stored `_wc_shipment_tracking_items` JSON for a given canonical slug.
      * Used by the admin order-list filter to OR-match legacy data.
