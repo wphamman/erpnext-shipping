@@ -11,7 +11,7 @@ function es_door_current() {
 
 es_test( 'door rate metadata pins an exact provider booking snapshot', function () {
 	$meta = ES_Carrier_Booking::build_rate_meta(
-		array( 'carrier' => 'MDS Collivery', 'service_name' => 'Road Freight', 'booking_service' => '3', 'price_incl_vat' => 112.34 ),
+		array( 'carrier' => 'MDS Collivery', 'service_name' => 'Road Freight', 'booking_service' => '3', 'tier' => 'economy', 'price_incl_vat' => 112.34 ),
 		'pretoria',
 		array( array( 'weight_kg' => 5.8, 'length_cm' => 40, 'width_cm' => 30, 'height_cm' => 20 ) ),
 		129,
@@ -21,11 +21,27 @@ es_test( 'door rate metadata pins an exact provider booking snapshot', function 
 	);
 	es_eq( 'mds-collivery', $meta[ ES_Carrier_Booking::M_PROVIDER ], 'provider canonicalized' );
 	es_eq( '3', $meta[ ES_Carrier_Booking::M_SERVICE_CODE ], 'numeric booking service pinned' );
+	es_eq( 'economy', $meta[ ES_Carrier_Booking::M_TIER ], 'delivery tier pinned for safe override' );
 	es_eq( '44', $meta[ ES_Carrier_Booking::M_INSTANCE_ID ], 'settings instance pinned' );
 	es_eq( '112.34', $meta[ ES_Carrier_Booking::M_PROVIDER_RATE ], 'provider rate pinned' );
 	es_ok( is_array( json_decode( $meta[ ES_Carrier_Booking::M_PARCELS ], true ) ), 'parcels persist as JSON' );
 	$bad = ES_Carrier_Booking::build_rate_meta( array( 'carrier' => 'MDS Collivery', 'service_code' => 'ECO', 'price_incl_vat' => 100 ), 'p', array( array( 'weight_kg' => 1, 'length_cm' => 1, 'width_cm' => 1, 'height_cm' => 1 ) ), 100 );
 	es_eq( array(), $bad, 'MDS display code cannot masquerade as booking service id' );
+} );
+
+es_test( 'carrier override preserves the customer tier and picks its cheapest service', function () {
+	$rates = array(
+		array( 'booking_service' => 'EXP', 'service_name' => 'Express', 'tier' => 'express', 'price_incl_vat' => 80 ),
+		array( 'booking_service' => 'ECO2', 'service_name' => 'Economy Two', 'tier' => 'economy', 'price_incl_vat' => 95 ),
+		array( 'booking_service' => 'ECO1', 'service_name' => 'Economy One', 'tier' => 'economy', 'price_incl_vat' => 75 ),
+		array( 'booking_service' => 'BAD', 'service_name' => 'Bad', 'tier' => 'economy', 'price_incl_vat' => 0 ),
+	);
+	$override = ES_Carrier_Booking::select_booking_rate( $rates, false, 'ORIGINAL', 'economy' );
+	es_eq( 'ECO1', $override['service'], 'cheapest equivalent-tier override selected' );
+	es_eq( 75.0, $override['rate'], 'override rate retained' );
+	$exact = ES_Carrier_Booking::select_booking_rate( $rates, true, 'ECO2', 'economy' );
+	es_eq( 'ECO2', $exact['service'], 'customer carrier keeps exact checkout service' );
+	es_eq( null, ES_Carrier_Booking::select_booking_rate( $rates, false, 'ORIGINAL', 'standard' ), 'override fails when equivalent tier is absent' );
 } );
 
 es_test( 'door booking outcome is conservative around uncertain responses', function () {
@@ -38,14 +54,19 @@ es_test( 'door booking outcome is conservative around uncertain responses', func
 } );
 
 es_test( 'booking confirmation expires and is bound to current order facts', function () {
-	$snapshot = array( ES_Carrier_Booking::M_PROVIDER => 'the-courier-guy', ES_Carrier_Booking::M_SERVICE_CODE => 'ECO', ES_Carrier_Booking::M_ORIGIN_LOC => 'pta' );
+	$snapshot = array( ES_Carrier_Booking::M_PROVIDER => 'the-courier-guy', ES_Carrier_Booking::M_SERVICE_CODE => 'ECO', ES_Carrier_Booking::M_SERVICE_NAME => 'Economy', ES_Carrier_Booking::M_TIER => 'economy', ES_Carrier_Booking::M_ORIGIN_LOC => 'pta' );
 	$current  = es_door_current();
 	$c = ES_Carrier_Booking::make_confirmation( 'secret', $snapshot, $current, 100, 1000 );
 	es_ok( ES_Carrier_Booking::confirmation_valid( $c, 'secret', $snapshot, $current, 1100 ), 'valid inside TTL' );
+	es_eq( 'the-courier-guy', $c['provider'], 'effective booking provider persisted in confirmation' );
+	es_eq( 'economy', $c['tier'], 'effective tier persisted in confirmation' );
 	es_ok( ! ES_Carrier_Booking::confirmation_valid( $c, 'wrong', $snapshot, $current, 1100 ), 'token mismatch rejected' );
 	es_ok( ! ES_Carrier_Booking::confirmation_valid( $c, 'secret', $snapshot, $current, 1301 ), 'expired rejected' );
 	$current['destination']['code'] = '9999';
 	es_ok( ! ES_Carrier_Booking::confirmation_valid( $c, 'secret', $snapshot, $current, 1100 ), 'address change rejected' );
+	$current = es_door_current();
+	$snapshot[ ES_Carrier_Booking::M_PROVIDER ] = 'mds-collivery';
+	es_ok( ! ES_Carrier_Booking::confirmation_valid( $c, 'secret', $snapshot, $current, 1100 ), 'carrier override tampering rejected' );
 } );
 
 es_test( 'ShipLogic payload uses exact service, contacts and parcel geometry', function () {

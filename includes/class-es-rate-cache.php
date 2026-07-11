@@ -16,10 +16,9 @@ class ES_Rate_Cache {
         $origin_key = ( $origin['code'] ?? '' ) . '|' . ( $origin['city'] ?? '' );
         $dest_key   = ( $destination['code'] ?? '' ) . '|' . ( $destination['city'] ?? '' );
         $parcel_hash = md5( wp_json_encode( $parcels ) );
-		// v2 stores the exact carrier booking service identifier alongside display
-		// rate data. Do not let a pre-v1.14 cached MDS quote create an order without
-		// the durable booking snapshot.
-        return 'es_ship_v2_' . md5( $origin_key . '_' . $dest_key . '_' . $parcel_hash );
+		// v3 also stores the delivery tier used to constrain an operator carrier
+		// override. Do not reuse a cached quote without the complete snapshot.
+        return 'es_ship_v3_' . md5( $origin_key . '_' . $dest_key . '_' . $parcel_hash );
     }
 
     /**

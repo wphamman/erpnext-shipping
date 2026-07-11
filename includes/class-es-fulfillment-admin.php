@@ -97,6 +97,7 @@ class ES_Fulfillment_Admin {
 			ES_Carrier_Booking::M_PROVIDER,
 			ES_Carrier_Booking::M_SERVICE_CODE,
 			ES_Carrier_Booking::M_SERVICE_NAME,
+			ES_Carrier_Booking::M_TIER,
 			ES_Carrier_Booking::M_INSTANCE_ID,
 			ES_Carrier_Booking::M_ORIGIN_LOC,
 			ES_Carrier_Booking::M_PROVIDER_RATE,

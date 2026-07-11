@@ -22,6 +22,7 @@ class ES_Carrier_Booking {
 	const M_PROVIDER       = '_es_carrier_provider';
 	const M_SERVICE_CODE   = '_es_carrier_service_code';
 	const M_SERVICE_NAME   = '_es_carrier_service_name';
+	const M_TIER           = '_es_carrier_service_tier';
 	const M_INSTANCE_ID    = '_es_carrier_instance_id';
 	const M_ORIGIN_LOC     = '_es_carrier_origin_location_id';
 	const M_PROVIDER_RATE  = '_es_carrier_provider_rate';
@@ -34,6 +35,9 @@ class ES_Carrier_Booking {
 	const M_SHIPMENT_ID    = '_es_carrier_shipment_id';
 	const M_TRACKING_REF   = '_es_carrier_tracking_ref';
 	const M_BOOKED_TS      = '_es_carrier_booked_ts';
+	const M_BOOKED_PROVIDER= '_es_carrier_booked_provider';
+	const M_BOOKED_SERVICE = '_es_carrier_booked_service';
+	const M_BOOKED_SERVICE_NAME = '_es_carrier_booked_service_name';
 	const M_LAST_ERROR     = '_es_carrier_booking_last_error';
 	const M_CONFIRMATION   = '_es_carrier_booking_confirmation';
 
@@ -45,6 +49,49 @@ class ES_Carrier_Booking {
 
 	public static function provider_name( $provider ) {
 		return self::PROVIDER_MDS === $provider ? 'MDS Collivery' : 'The Courier Guy';
+	}
+
+	/**
+	 * Pick the booking rate for an operator's carrier choice.
+	 *
+	 * The customer's carrier retains its exact checkout service. An override uses
+	 * the cheapest currently returned service in the same delivery tier, so an
+	 * Economy order cannot silently become Express (or vice versa).
+	 */
+	public static function select_booking_rate( array $rates, $same_provider, $service, $tier ) {
+		$service = (string) $service;
+		$tier    = strtolower( trim( (string) $tier ) );
+		$best    = null;
+
+		foreach ( $rates as $rate ) {
+			$code  = (string) ( $rate['booking_service'] ?? $rate['service_code'] ?? '' );
+			$price = $rate['price_incl_vat'] ?? null;
+			if ( '' === $code || ! is_numeric( $price ) || (float) $price <= 0 ) {
+				continue;
+			}
+			if ( $same_provider ) {
+				if ( ! hash_equals( $service, $code ) ) {
+					continue;
+				}
+			} elseif ( '' === $tier || $tier !== strtolower( trim( (string) ( $rate['tier'] ?? '' ) ) ) ) {
+				continue;
+			}
+
+			$candidate = array(
+				'service'      => $code,
+				'service_name' => (string) ( $rate['service_name'] ?? $code ),
+				'tier'         => (string) ( $rate['tier'] ?? $tier ),
+				'rate'         => round( (float) $price, 2 ),
+			);
+			if ( null === $best || $candidate['rate'] < $best['rate'] ) {
+				$best = $candidate;
+			}
+			if ( $same_provider ) {
+				break;
+			}
+		}
+
+		return $best;
 	}
 
 	/** Build hidden WC rate meta for a single-origin door quote. */
@@ -69,6 +116,7 @@ class ES_Carrier_Booking {
 			self::M_PROVIDER      => $provider,
 			self::M_SERVICE_CODE  => $service,
 			self::M_SERVICE_NAME  => (string) ( $rate['service_name'] ?? $service ),
+			self::M_TIER          => (string) ( $rate['tier'] ?? 'standard' ),
 			self::M_INSTANCE_ID   => (string) max( 0, (int) $instance_id ),
 			self::M_ORIGIN_LOC    => (string) $origin_location_id,
 			self::M_PROVIDER_RATE => number_format( (float) $cost, 2, '.', '' ),
@@ -144,6 +192,7 @@ class ES_Carrier_Booking {
 		$payload = array(
 			'provider' => (string) ( $snapshot[ self::M_PROVIDER ] ?? '' ),
 			'service'  => (string) ( $snapshot[ self::M_SERVICE_CODE ] ?? '' ),
+			'tier'     => (string) ( $snapshot[ self::M_TIER ] ?? '' ),
 			'origin'   => (string) ( $snapshot[ self::M_ORIGIN_LOC ] ?? '' ),
 			'parcels'  => self::normalize_parcels( (array) ( $current['parcels'] ?? array() ) ),
 			'from'     => self::canonical_address( (array) ( $current['origin'] ?? array() ) ),
@@ -159,6 +208,10 @@ class ES_Carrier_Booking {
 			'token_hash'    => hash( 'sha256', (string) $token ),
 			'snapshot_hash' => self::snapshot_hash( $snapshot, $current ),
 			'fresh_rate'    => round( (float) $fresh_rate, 2 ),
+			'provider'      => (string) ( $snapshot[ self::M_PROVIDER ] ?? '' ),
+			'service'       => (string) ( $snapshot[ self::M_SERVICE_CODE ] ?? '' ),
+			'service_name'  => (string) ( $snapshot[ self::M_SERVICE_NAME ] ?? '' ),
+			'tier'          => (string) ( $snapshot[ self::M_TIER ] ?? '' ),
 			'expires'       => $now + self::CONFIRM_TTL,
 		);
 	}

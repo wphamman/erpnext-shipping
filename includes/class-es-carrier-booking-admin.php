@@ -45,17 +45,26 @@ class ES_Carrier_Booking_Admin {
 		$guard       = ES_Carrier_Booking::guard( $shipment_id, $status );
 		$nonce       = wp_create_nonce( 'es_carrier_booking_' . $order_id );
 		$name        = ES_Carrier_Booking::provider_name( $snapshot[ ES_Carrier_Booking::M_PROVIDER ] );
+		$booked_provider = (string) $order->get_meta( ES_Carrier_Booking::M_BOOKED_PROVIDER, true );
+		$booked_service  = (string) $order->get_meta( ES_Carrier_Booking::M_BOOKED_SERVICE_NAME, true );
+		if ( ! ES_Carrier_Booking::supported_provider( $booked_provider ) ) {
+			$booked_provider = $snapshot[ ES_Carrier_Booking::M_PROVIDER ];
+		}
+		if ( '' === $booked_service ) {
+			$booked_service = $snapshot[ ES_Carrier_Booking::M_SERVICE_NAME ];
+		}
 		?>
 		<div class="es-booking-section" data-order-id="<?php echo esc_attr( $order_id ); ?>" data-nonce="<?php echo esc_attr( $nonce ); ?>">
 			<h4 style="margin:0 0 8px;"><?php esc_html_e( 'Carrier booking', 'erpnext-shipping' ); ?></h4>
 			<div style="background:#f6f7f7;border-left:4px solid #2271b1;padding:9px 10px;margin-bottom:10px;">
+				<small><?php esc_html_e( 'Customer selected', 'erpnext-shipping' ); ?></small><br>
 				<strong><?php echo esc_html( $name ); ?></strong><br>
 				<span><?php echo esc_html( $snapshot[ ES_Carrier_Booking::M_SERVICE_NAME ] ); ?></span><br>
 				<small><?php echo esc_html( sprintf( __( 'Customer paid R%s shipping · checkout provider quote R%s', 'erpnext-shipping' ), $snapshot[ ES_Carrier_Booking::M_CUSTOMER_CHG ], $snapshot[ ES_Carrier_Booking::M_PROVIDER_RATE ] ) ); ?></small>
 			</div>
 
 			<?php if ( ES_Carrier_Booking::STATE_BOOKED === $status && '' !== $shipment_id ) : ?>
-				<p style="margin:0 0 8px;color:#1d6f42;"><span class="dashicons dashicons-yes-alt"></span> <strong><?php esc_html_e( 'Shipment booked', 'erpnext-shipping' ); ?></strong><br><small><?php echo esc_html( $tracking ?: $shipment_id ); ?></small></p>
+				<p style="margin:0 0 8px;color:#1d6f42;"><span class="dashicons dashicons-yes-alt"></span> <strong><?php esc_html_e( 'Shipment booked', 'erpnext-shipping' ); ?></strong><br><?php echo esc_html( ES_Carrier_Booking::provider_name( $booked_provider ) . ' — ' . $booked_service ); ?><br><small><?php echo esc_html( $tracking ?: $shipment_id ); ?></small></p>
 				<?php $doc_nonce = wp_create_nonce( 'es_carrier_document_' . $order_id ); ?>
 				<p style="display:flex;gap:6px;margin-bottom:0;">
 					<a class="button" style="flex:1;text-align:center;" target="_blank" href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=es_carrier_booking_document&kind=waybill&order_id=' . $order_id . '&_wpnonce=' . $doc_nonce ) ); ?>"><?php esc_html_e( 'Waybill PDF', 'erpnext-shipping' ); ?></a>
@@ -70,6 +79,11 @@ class ES_Carrier_Booking_Admin {
 				<p><button type="button" class="button es-carrier-clear" style="width:100%;"><?php esc_html_e( 'I checked the portal — clear & retry', 'erpnext-shipping' ); ?></button></p>
 			<?php else : ?>
 				<?php if ( ES_Carrier_Booking::STATE_ERROR === $status && $error ) : ?><p style="color:#b32d2e;font-size:12px;"><?php echo esc_html( $error ); ?></p><?php endif; ?>
+				<label for="es-carrier-provider-<?php echo esc_attr( $order_id ); ?>"><strong><?php esc_html_e( 'Book with', 'erpnext-shipping' ); ?></strong></label>
+				<select id="es-carrier-provider-<?php echo esc_attr( $order_id ); ?>" class="es-carrier-provider" style="width:100%;margin:4px 0 8px;">
+					<option value="the-courier-guy" <?php selected( ES_Carrier_Booking::PROVIDER_TCG, $snapshot[ ES_Carrier_Booking::M_PROVIDER ] ); ?>><?php echo esc_html( 'The Courier Guy' . ( ES_Carrier_Booking::PROVIDER_TCG === $snapshot[ ES_Carrier_Booking::M_PROVIDER ] ? ' — customer choice' : '' ) ); ?></option>
+					<option value="mds-collivery" <?php selected( ES_Carrier_Booking::PROVIDER_MDS, $snapshot[ ES_Carrier_Booking::M_PROVIDER ] ); ?>><?php echo esc_html( 'MDS Collivery' . ( ES_Carrier_Booking::PROVIDER_MDS === $snapshot[ ES_Carrier_Booking::M_PROVIDER ] ? ' — customer choice' : '' ) ); ?></option>
+				</select>
 				<div class="es-carrier-live-quote" style="display:none;background:#edfaef;border:1px solid #68a775;padding:9px 10px;margin-bottom:8px;"></div>
 				<button type="button" class="button es-carrier-check" style="width:100%;"><?php esc_html_e( 'Check live booking cost', 'erpnext-shipping' ); ?></button>
 				<button type="button" class="button button-primary es-carrier-book" style="width:100%;display:none;margin-top:6px;"></button>
@@ -91,17 +105,19 @@ class ES_Carrier_Booking_Admin {
 		<script>
 		jQuery(function($){
 			function box(el){ return $(el).closest('.es-booking-section'); }
+			function h(value){ return $('<div>').text(value == null ? '' : String(value)).html(); }
 			function fail(r){ return (r && r.data && r.data.message) ? r.data.message : ((r && r.data) ? r.data : '<?php echo esc_js( __( 'Carrier request failed.', 'erpnext-shipping' ) ); ?>'); }
 			$(document).on('click','.es-carrier-check',function(){
 				var $b=$(this),$x=box(this); $b.prop('disabled',true).text('<?php echo esc_js( __( 'Checking live carrier…', 'erpnext-shipping' ) ); ?>');
-				$.post(ajaxurl,{action:'es_carrier_booking_check',order_id:$x.data('order-id'),_ajax_nonce:$x.data('nonce')},function(r){
+				$.post(ajaxurl,{action:'es_carrier_booking_check',order_id:$x.data('order-id'),_ajax_nonce:$x.data('nonce'),provider:$x.find('.es-carrier-provider').val()},function(r){
 					if(!r.success){alert(fail(r));$b.prop('disabled',false).text('<?php echo esc_js( __( 'Check live booking cost', 'erpnext-shipping' ) ); ?>');return;}
-					$x.data('confirm-token',r.data.token);$x.find('.es-carrier-live-quote').html('<strong>'+r.data.provider+'</strong><br><?php echo esc_js( __( 'Live booking cost:', 'erpnext-shipping' ) ); ?> R'+r.data.rate+'<br><small>'+r.data.margin_note+'</small>').show();
+					$x.data('confirm-token',r.data.token).data('confirm-label',r.data.provider+' — R'+r.data.rate);$x.find('.es-carrier-live-quote').html('<strong>'+h(r.data.provider)+' — '+h(r.data.service_name)+'</strong><br><?php echo esc_js( __( 'Live booking cost:', 'erpnext-shipping' ) ); ?> R'+h(r.data.rate)+'<br><small>'+h(r.data.override_note+r.data.margin_note)+'</small>').show();
 					$x.find('.es-carrier-book').text('<?php echo esc_js( __( 'Confirm & book — R', 'erpnext-shipping' ) ); ?>'+r.data.rate).show();$b.hide();
 				});
 			});
+			$(document).on('change','.es-carrier-provider',function(){var $x=box(this);$x.removeData('confirm-token');$x.find('.es-carrier-live-quote,.es-carrier-book').hide();$x.find('.es-carrier-check').prop('disabled',false).text('<?php echo esc_js( __( 'Check live booking cost', 'erpnext-shipping' ) ); ?>').show();});
 			$(document).on('click','.es-carrier-book',function(){
-				var $b=$(this),$x=box(this);if(!confirm('<?php echo esc_js( __( 'Create and accept this carrier booking? This may incur the displayed charge.', 'erpnext-shipping' ) ); ?>'))return;
+				var $b=$(this),$x=box(this),label=$x.data('confirm-label')||'';if(!confirm('<?php echo esc_js( __( 'Create and accept this carrier booking?', 'erpnext-shipping' ) ); ?>\n\n'+label+'\n\n<?php echo esc_js( __( 'This creates a real shipment and may incur the displayed charge.', 'erpnext-shipping' ) ); ?>'))return;
 				$b.prop('disabled',true).text('<?php echo esc_js( __( 'Booking… do not close this page', 'erpnext-shipping' ) ); ?>');
 				$.post(ajaxurl,{action:'es_carrier_booking_book',order_id:$x.data('order-id'),_ajax_nonce:$x.data('nonce'),confirm_token:$x.data('confirm-token')},function(r){if(r.success){location.reload();}else{alert(fail(r));location.reload();}}).fail(function(){alert('<?php echo esc_js( __( 'The response was interrupted. Check the carrier portal before retrying.', 'erpnext-shipping' ) ); ?>');location.reload();});
 			});
@@ -116,16 +132,25 @@ class ES_Carrier_Booking_Admin {
 
 	public static function ajax_check() {
 		list( $order, $snapshot ) = self::authorize_order();
-		$valid = self::validate_current( $order, $snapshot );
+		$requested = sanitize_key( wp_unslash( $_POST['provider'] ?? '' ) );
+		if ( ! ES_Carrier_Booking::supported_provider( $requested ) ) {
+			wp_send_json_error( array( 'message' => __( 'Choose a supported booking carrier.', 'erpnext-shipping' ) ) );
+		}
+		$effective = $snapshot;
+		$effective[ ES_Carrier_Booking::M_PROVIDER ] = $requested;
+		$valid = self::validate_current( $order, $effective );
 		if ( ! $valid['ok'] ) {
 			wp_send_json_error( array( 'message' => $valid['error'] ) );
 		}
-		$fresh = self::fresh_rate( $snapshot, $valid );
+		$fresh = self::fresh_rate( $snapshot, $valid, $requested );
 		if ( ! $fresh['ok'] ) {
 			wp_send_json_error( array( 'message' => $fresh['error'] ) );
 		}
+		$effective[ ES_Carrier_Booking::M_SERVICE_CODE ] = $fresh['service'];
+		$effective[ ES_Carrier_Booking::M_SERVICE_NAME ] = $fresh['service_name'];
+		$effective[ ES_Carrier_Booking::M_TIER ]         = $fresh['tier'];
 		$token   = wp_generate_password( 32, false, false );
-		$confirm = ES_Carrier_Booking::make_confirmation( $token, $snapshot, $valid, $fresh['rate'] );
+		$confirm = ES_Carrier_Booking::make_confirmation( $token, $effective, $valid, $fresh['rate'] );
 		$order->update_meta_data( ES_Carrier_Booking::M_CONFIRMATION, $confirm );
 		$order->save();
 		$customer = (float) $snapshot[ ES_Carrier_Booking::M_CUSTOMER_CHG ];
@@ -133,7 +158,15 @@ class ES_Carrier_Booking_Admin {
 		$note     = $delta >= 0
 			? sprintf( __( 'Customer charge covers the carrier by R%.2f.', 'erpnext-shipping' ), $delta )
 			: sprintf( __( 'Carrier cost is R%.2f above the customer charge.', 'erpnext-shipping' ), abs( $delta ) );
-		wp_send_json_success( array( 'token' => $token, 'rate' => number_format( $fresh['rate'], 2, '.', '' ), 'provider' => ES_Carrier_Booking::provider_name( $snapshot[ ES_Carrier_Booking::M_PROVIDER ] ), 'margin_note' => $note ) );
+		$overridden = $requested !== $snapshot[ ES_Carrier_Booking::M_PROVIDER ];
+		wp_send_json_success( array(
+			'token'         => $token,
+			'rate'          => number_format( $fresh['rate'], 2, '.', '' ),
+			'provider'      => ES_Carrier_Booking::provider_name( $requested ),
+			'service_name'  => $fresh['service_name'],
+			'override_note' => $overridden ? sprintf( __( 'Override: customer selected %s. ', 'erpnext-shipping' ), ES_Carrier_Booking::provider_name( $snapshot[ ES_Carrier_Booking::M_PROVIDER ] ) ) : '',
+			'margin_note'   => $note,
+		) );
 	}
 
 	public static function ajax_book() {
@@ -153,21 +186,22 @@ class ES_Carrier_Booking_Admin {
 		$order->delete_meta_data( ES_Carrier_Booking::M_LAST_ERROR );
 		$order->save();
 
-		$valid   = self::validate_current( $order, $snapshot );
 		$confirm = (array) $order->get_meta( ES_Carrier_Booking::M_CONFIRMATION, true );
+		$effective = self::snapshot_from_confirmation( $snapshot, $confirm );
+		$valid   = self::validate_current( $order, $effective );
 		$token   = sanitize_text_field( wp_unslash( $_POST['confirm_token'] ?? '' ) );
-		if ( ! $valid['ok'] || ! ES_Carrier_Booking::confirmation_valid( $confirm, $token, $snapshot, $valid ) ) {
+		if ( ! $valid['ok'] || ! ES_Carrier_Booking::confirmation_valid( $confirm, $token, $effective, $valid ) ) {
 			self::persist_outcome( $order, array( 'state' => ES_Carrier_Booking::STATE_ERROR, 'error' => $valid['ok'] ? __( 'The live quote expired or the order changed. Check the cost again.', 'erpnext-shipping' ) : $valid['error'], 'shipment_id' => '', 'tracking_ref' => '' ) );
 			wp_send_json_error( array( 'message' => __( 'The live quote expired or the order changed. Check the cost again.', 'erpnext-shipping' ) ) );
 		}
 
-		$client = self::client( $snapshot, $valid['settings'] );
-		$args   = self::booking_args( $order, $snapshot, $valid );
+		$client = self::client( $effective, $valid['settings'] );
+		$args   = self::booking_args( $order, $effective, $valid );
 		$result = $client ? $client->create_shipment( $args ) : array( 'ok' => false, 'http' => 400, 'error' => 'Carrier is not configured.' );
 		$outcome = ES_Carrier_Booking::classify_result( $result );
-		self::persist_outcome( $order, $outcome );
+		self::persist_outcome( $order, $outcome, $effective );
 		if ( ES_Carrier_Booking::STATE_BOOKED === $outcome['state'] ) {
-			self::append_tracking_once( $order, $snapshot[ ES_Carrier_Booking::M_PROVIDER ], $outcome['tracking_ref'] ?: $outcome['shipment_id'] );
+			self::append_tracking_once( $order, $effective[ ES_Carrier_Booking::M_PROVIDER ], $outcome['tracking_ref'] ?: $outcome['shipment_id'] );
 			wp_send_json_success( array( 'message' => __( 'Shipment booked.', 'erpnext-shipping' ) ) );
 		}
 		wp_send_json_error( array( 'message' => ES_Carrier_Booking::STATE_AMBIGUOUS === $outcome['state'] ? __( 'Booking outcome is uncertain. Check the carrier portal before retrying.', 'erpnext-shipping' ) : $outcome['error'] ) );
@@ -209,8 +243,9 @@ class ES_Carrier_Booking_Admin {
 		if ( '' === $id ) {
 			wp_die( esc_html__( 'No booked shipment exists.', 'erpnext-shipping' ), '', array( 'response' => 404 ) );
 		}
-		$settings = self::settings_for_snapshot( $snapshot );
-		$client   = self::client( $snapshot, $settings );
+		$effective = self::booked_snapshot( $order, $snapshot );
+		$settings = self::settings_for_snapshot( $effective );
+		$client   = self::client( $effective, $settings );
 		$res      = $client ? $client->fetch_document( $kind, $id, (string) $order->get_meta( ES_Carrier_Booking::M_TRACKING_REF, true ) ) : array( 'ok' => false );
 		if ( empty( $res['ok'] ) || '%PDF-' !== substr( (string) ( $res['body'] ?? '' ), 0, 5 ) ) {
 			wp_die( esc_html__( 'The carrier did not return a valid PDF.', 'erpnext-shipping' ), '', array( 'response' => 502 ) );
@@ -218,7 +253,7 @@ class ES_Carrier_Booking_Admin {
 		nocache_headers();
 		header( 'Content-Type: application/pdf' );
 		header( 'X-Content-Type-Options: nosniff' );
-		header( 'Content-Disposition: attachment; filename="' . sanitize_file_name( $snapshot[ ES_Carrier_Booking::M_PROVIDER ] . '-' . $kind . '-' . $id . '.pdf' ) . '"' );
+		header( 'Content-Disposition: attachment; filename="' . sanitize_file_name( $effective[ ES_Carrier_Booking::M_PROVIDER ] . '-' . $kind . '-' . $id . '.pdf' ) . '"' );
 		echo $res['body']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- verified PDF bytes.
 		exit;
 	}
@@ -227,7 +262,7 @@ class ES_Carrier_Booking_Admin {
 		if ( ! $order || ! is_callable( array( $order, 'get_items' ) ) ) {
 			return null;
 		}
-		$keys = array( ES_Carrier_Booking::M_PROVIDER, ES_Carrier_Booking::M_SERVICE_CODE, ES_Carrier_Booking::M_SERVICE_NAME, ES_Carrier_Booking::M_INSTANCE_ID, ES_Carrier_Booking::M_ORIGIN_LOC, ES_Carrier_Booking::M_PROVIDER_RATE, ES_Carrier_Booking::M_CUSTOMER_CHG, ES_Carrier_Booking::M_PARCELS, ES_Carrier_Booking::M_QUOTE_TS, ES_Carrier_Booking::M_IS_SPLIT );
+		$keys = array( ES_Carrier_Booking::M_PROVIDER, ES_Carrier_Booking::M_SERVICE_CODE, ES_Carrier_Booking::M_SERVICE_NAME, ES_Carrier_Booking::M_TIER, ES_Carrier_Booking::M_INSTANCE_ID, ES_Carrier_Booking::M_ORIGIN_LOC, ES_Carrier_Booking::M_PROVIDER_RATE, ES_Carrier_Booking::M_CUSTOMER_CHG, ES_Carrier_Booking::M_PARCELS, ES_Carrier_Booking::M_QUOTE_TS, ES_Carrier_Booking::M_IS_SPLIT );
 		foreach ( $order->get_items( 'shipping' ) as $item ) {
 			if ( '' === (string) $item->get_meta( ES_Carrier_Booking::M_PROVIDER, true ) ) {
 				continue;
@@ -235,6 +270,9 @@ class ES_Carrier_Booking_Admin {
 			$out = array();
 			foreach ( $keys as $key ) {
 				$out[ $key ] = (string) $item->get_meta( $key, true );
+			}
+			if ( '' === $out[ ES_Carrier_Booking::M_TIER ] && method_exists( $item, 'get_method_id' ) && preg_match( '/_(economy|standard|express)$/', (string) $item->get_method_id(), $match ) ) {
+				$out[ ES_Carrier_Booking::M_TIER ] = $match[1];
 			}
 			$parcels = json_decode( $out[ ES_Carrier_Booking::M_PARCELS ], true );
 			if ( ! ES_Carrier_Booking::supported_provider( $out[ ES_Carrier_Booking::M_PROVIDER ] ) || '' === $out[ ES_Carrier_Booking::M_SERVICE_CODE ] || empty( $parcels ) ) {
@@ -285,20 +323,24 @@ class ES_Carrier_Booking_Admin {
 		return array( 'ok' => true, 'settings' => $settings, 'origin' => $origin, 'destination' => $dest, 'parcels' => $parcels, 'delivery_contact' => $delivery_contact, 'collection_contact' => $collection_contact );
 	}
 
-	private static function fresh_rate( array $snapshot, array $valid ) {
-		$provider = $snapshot[ ES_Carrier_Booking::M_PROVIDER ];
+	private static function fresh_rate( array $snapshot, array $valid, $provider ) {
 		$settings = $valid['settings'];
 		$carrier  = ES_Carrier_Booking::PROVIDER_MDS === $provider
 			? new ES_Carrier_Collivery( $settings['mds_api_token'] )
 			: new ES_Carrier_ShipLogic( $settings['tcg_api_token'], $settings['company_name'] ?? '' );
 		$rates = $carrier->get_rates( $valid['origin'], $valid['destination'], $valid['parcels'] );
-		foreach ( (array) $rates as $rate ) {
-			$service = (string) ( $rate['booking_service'] ?? $rate['service_code'] ?? '' );
-			if ( hash_equals( (string) $snapshot[ ES_Carrier_Booking::M_SERVICE_CODE ], $service ) && is_numeric( $rate['price_incl_vat'] ?? null ) && (float) $rate['price_incl_vat'] > 0 ) {
-				return array( 'ok' => true, 'rate' => round( (float) $rate['price_incl_vat'], 2 ) );
-			}
+		$selected = ES_Carrier_Booking::select_booking_rate(
+			(array) $rates,
+			$provider === $snapshot[ ES_Carrier_Booking::M_PROVIDER ],
+			$snapshot[ ES_Carrier_Booking::M_SERVICE_CODE ],
+			$snapshot[ ES_Carrier_Booking::M_TIER ] ?? ''
+		);
+		if ( null !== $selected ) {
+			return array_merge( array( 'ok' => true ), $selected );
 		}
-		return array( 'ok' => false, 'error' => __( 'The customer-selected carrier service is no longer available for the current order/address.', 'erpnext-shipping' ) );
+		return array( 'ok' => false, 'error' => $provider === $snapshot[ ES_Carrier_Booking::M_PROVIDER ]
+			? __( 'The customer-selected carrier service is no longer available for the current order/address.', 'erpnext-shipping' )
+			: __( 'The override carrier has no current service in the customer-selected delivery tier.', 'erpnext-shipping' ) );
 	}
 
 	private static function booking_args( $order, array $snapshot, array $valid ) {
@@ -311,20 +353,50 @@ class ES_Carrier_Booking_Admin {
 		);
 	}
 
-	private static function persist_outcome( $order, array $outcome ) {
+	private static function persist_outcome( $order, array $outcome, array $effective = array() ) {
 		$order->update_meta_data( ES_Carrier_Booking::M_BOOKING_STATUS, $outcome['state'] );
 		$order->delete_meta_data( ES_Carrier_Booking::M_CONFIRMATION );
 		if ( ES_Carrier_Booking::STATE_BOOKED === $outcome['state'] ) {
 			$order->update_meta_data( ES_Carrier_Booking::M_SHIPMENT_ID, $outcome['shipment_id'] );
 			$order->update_meta_data( ES_Carrier_Booking::M_TRACKING_REF, $outcome['tracking_ref'] );
 			$order->update_meta_data( ES_Carrier_Booking::M_BOOKED_TS, time() );
+			$order->update_meta_data( ES_Carrier_Booking::M_BOOKED_PROVIDER, (string) ( $effective[ ES_Carrier_Booking::M_PROVIDER ] ?? '' ) );
+			$order->update_meta_data( ES_Carrier_Booking::M_BOOKED_SERVICE, (string) ( $effective[ ES_Carrier_Booking::M_SERVICE_CODE ] ?? '' ) );
+			$order->update_meta_data( ES_Carrier_Booking::M_BOOKED_SERVICE_NAME, (string) ( $effective[ ES_Carrier_Booking::M_SERVICE_NAME ] ?? '' ) );
 			$order->delete_meta_data( ES_Carrier_Booking::M_LAST_ERROR );
-			$order->add_order_note( sprintf( __( 'Carrier shipment booked. Shipment %1$s, tracking %2$s.', 'erpnext-shipping' ), $outcome['shipment_id'], $outcome['tracking_ref'] ?: $outcome['shipment_id'] ) );
+			$order->add_order_note( sprintf( __( '%1$s shipment booked using %2$s. Shipment %3$s, tracking %4$s.', 'erpnext-shipping' ), ES_Carrier_Booking::provider_name( $effective[ ES_Carrier_Booking::M_PROVIDER ] ?? '' ), $effective[ ES_Carrier_Booking::M_SERVICE_NAME ] ?? '', $outcome['shipment_id'], $outcome['tracking_ref'] ?: $outcome['shipment_id'] ) );
 		} else {
 			$order->update_meta_data( ES_Carrier_Booking::M_LAST_ERROR, $outcome['error'] );
 			$order->add_order_note( sprintf( __( 'Carrier booking %1$s: %2$s', 'erpnext-shipping' ), $outcome['state'], $outcome['error'] ) );
 		}
 		$order->save();
+	}
+
+	private static function snapshot_from_confirmation( array $snapshot, array $confirmation ) {
+		$effective = $snapshot;
+		$provider  = (string) ( $confirmation['provider'] ?? '' );
+		$service   = (string) ( $confirmation['service'] ?? '' );
+		if ( ES_Carrier_Booking::supported_provider( $provider ) && '' !== $service ) {
+			$effective[ ES_Carrier_Booking::M_PROVIDER ]     = $provider;
+			$effective[ ES_Carrier_Booking::M_SERVICE_CODE ] = $service;
+			$effective[ ES_Carrier_Booking::M_SERVICE_NAME ] = (string) ( $confirmation['service_name'] ?? $service );
+			$effective[ ES_Carrier_Booking::M_TIER ]         = (string) ( $confirmation['tier'] ?? '' );
+		}
+		return $effective;
+	}
+
+	private static function booked_snapshot( $order, array $snapshot ) {
+		$effective = $snapshot;
+		$provider  = (string) $order->get_meta( ES_Carrier_Booking::M_BOOKED_PROVIDER, true );
+		$service   = (string) $order->get_meta( ES_Carrier_Booking::M_BOOKED_SERVICE, true );
+		if ( ES_Carrier_Booking::supported_provider( $provider ) ) {
+			$effective[ ES_Carrier_Booking::M_PROVIDER ] = $provider;
+		}
+		if ( '' !== $service ) {
+			$effective[ ES_Carrier_Booking::M_SERVICE_CODE ] = $service;
+			$effective[ ES_Carrier_Booking::M_SERVICE_NAME ] = (string) $order->get_meta( ES_Carrier_Booking::M_BOOKED_SERVICE_NAME, true );
+		}
+		return $effective;
 	}
 
 	private static function append_tracking_once( $order, $provider, $tracking ) {

@@ -45,6 +45,16 @@ Only with an authorised staging/test carrier account:
 
 For an intentionally interrupted/timeout test, the order must enter **Booking outcome needs review**. It may only be cleared after checking the carrier portal and confirming no shipment exists.
 
+## Carrier override
+
+1. Place a new paid, single-origin order using a Courier Guy door rate.
+2. In *Carrier Fulfilment*, confirm the summary still identifies Courier Guy as the customer choice.
+3. Change **Book with** to MDS Collivery and click **Check live booking cost**. This step must not create a shipment.
+4. Confirm the green quote names MDS, identifies the override, and returns an MDS service in the same Economy/Standard/Express tier as the customer's service.
+5. Click **Confirm & book** and verify the browser warning names MDS and the live price before accepting it.
+6. After booking, confirm the panel and order note show MDS while retaining the original Courier Guy checkout summary; tracking and both PDF buttons must use the MDS shipment.
+7. Repeat in the opposite direction on an order placed with MDS. If the alternate carrier has no service in the same tier, the check must refuse rather than substitute another tier.
+
 ## Native documents
 
 After a successful booking:
