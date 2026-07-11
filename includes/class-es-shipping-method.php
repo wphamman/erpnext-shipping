@@ -1076,13 +1076,13 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 $meta['Free Above'] = 'R' . wc_format_decimal( $band['free_threshold'], 2 );
             }
 
-            if ( ! $this->add_tax_inclusive_rate( array(
+            if ( ! $this->add_configured_rate( array(
                 'id'        => $this->id . '_bulk_delivery',
                 'label'     => $label,
                 'cost'      => $cost,
                 'meta_data' => $meta,
             ) ) ) {
-                $this->log( 'Own vehicle delivery skipped: invalid VAT-inclusive tax split.' );
+                $this->log( 'Own vehicle delivery skipped: invalid configured price.' );
                 return false;
             }
 
@@ -1106,7 +1106,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
         $is_free        = $free_threshold > 0 && $cart_total >= $free_threshold;
         $cost           = $is_free ? 0 : ceil( ( $priced_distance_km * $rate_per_km ) / 5 ) * 5;
 
-        if ( ! $this->add_tax_inclusive_rate( array(
+        if ( ! $this->add_configured_rate( array(
             'id'        => $this->id . '_bulk_delivery',
             'label'     => $label,
             'cost'      => $cost,
@@ -1116,7 +1116,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'Rate'              => $is_free ? __( 'Free delivery threshold met', 'erpnext-shipping' ) : sprintf( 'R%s/km', wc_format_decimal( $rate_per_km, 2 ) ),
             ),
         ) ) ) {
-            $this->log( 'Own vehicle delivery skipped: invalid VAT-inclusive tax split.' );
+            $this->log( 'Own vehicle delivery skipped: invalid configured price.' );
             return false;
         }
 
@@ -1647,10 +1647,9 @@ class ES_Shipping_Method extends WC_Shipping_Method {
 	 * Add a rate whose configured/calculated amount is the customer's final,
 	 * VAT-inclusive charge.
 	 *
-	 * WC_Shipping_Method normally treats `cost` as tax-exclusive. Carrier quotes,
-	 * fallback amounts and own-vehicle prices in this plugin are merchant-facing
-	 * gross amounts, so split them with WooCommerce's active shipping tax rates
-	 * and provide the explicit net + tax map. This keeps the displayed amount
+	 * WC_Shipping_Method normally treats `cost` as tax-exclusive. Carrier APIs
+	 * return gross amounts, so split them with WooCommerce's active shipping tax
+	 * rates and provide the explicit net + tax map. This keeps the displayed gross
 	 * unchanged and gives order/ERP sync distinct shipping_total/shipping_tax.
 	 *
 	 * TCG Locker deliberately does not use this helper: its pricing contract
@@ -1679,6 +1678,29 @@ class ES_Shipping_Method extends WC_Shipping_Method {
     }
 
     /**
+     * Add a merchant-entered fallback or own-vehicle price.
+     *
+     * These settings follow WooCommerce's store-wide "prices entered with tax"
+     * contract. Retail stores that enter gross prices get an explicit net/tax
+     * split; wholesale stores that enter ex-VAT prices pass the net cost through
+     * and let WooCommerce calculate its normal shipping tax.
+     */
+    private function add_configured_rate( array $args ) {
+        if ( ES_Shipping_Tax::configured_amount_includes_tax( wc_prices_include_tax() ) ) {
+            return $this->add_tax_inclusive_rate( $args );
+        }
+
+        $validated = ES_Shipping_Tax::split_inclusive( $args['cost'] ?? null, array() );
+        if ( empty( $validated['ok'] ) ) {
+            return false;
+        }
+
+        $args['cost'] = $validated['gross'];
+        $this->add_rate( $args );
+        return true;
+    }
+
+    /**
      * Add the flat rate fallback.
      */
     private function add_fallback_rate() {
@@ -1686,7 +1708,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
         if ( $fallback <= 0 ) {
             return;
         }
-        $this->add_tax_inclusive_rate( array(
+        $this->add_configured_rate( array(
             'id'    => $this->id . '_fallback',
             'label' => __( 'Flat Rate Shipping', 'erpnext-shipping' ),
             'cost'  => $fallback,

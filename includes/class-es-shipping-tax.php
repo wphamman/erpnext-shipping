@@ -6,6 +6,13 @@ defined( 'ABSPATH' ) || exit;
 class ES_Shipping_Tax {
 
 	/**
+	 * Normalize WooCommerce's "prices entered with tax" setting.
+	 */
+	public static function configured_amount_includes_tax( $value ) {
+		return true === $value || 1 === $value || '1' === $value || 'yes' === strtolower( (string) $value );
+	}
+
+	/**
 	 * Split a gross customer charge into WooCommerce's net cost + tax map.
 	 *
 	 * WC_Tax calculates the inclusive tax map in the runtime-facing caller. This

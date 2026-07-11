@@ -31,7 +31,7 @@ With the store's normal 15% standard VAT rate and shipping taxable, obtain a liv
 2. Confirm the shipping radio and order total show that gross customer price, not that price plus another 15%. For example, a rounded R100 charge must display as R100, not R115.
 3. Confirm the cart/order records the amount as net shipping plus one VAT component whose sum equals the displayed gross.
 4. Confirm a zero-rated/non-taxable shipping context preserves the same gross price with no shipping tax.
-5. Confirm a configured flat-rate fallback and own-vehicle fee also display as their configured gross totals.
+5. Confirm a configured flat-rate fallback and own-vehicle fee follow WooCommerce's **prices entered with tax** mode: the configured amount is gross on an inclusive retail store and ex-VAT on an exclusive wholesale store.
 6. Confirm TCG Locker still displays its existing VAT-reconciled total unchanged.
 
 For ERPNext Fusion, keep shipping on the normal taxable path: Woo's `shipping_total` is net and `shipping_tax` is the VAT amount. Do not make shipping zero-rated to compensate for a double-tax display.

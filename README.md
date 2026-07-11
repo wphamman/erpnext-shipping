@@ -11,7 +11,7 @@ Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routin
 - **Smart fulfillment** — single-location, cheapest-location, or split-shipment routing
 - **Tiered pricing** — groups carrier rates into Economy, Standard, and Express tiers, showing the cheapest option per tier
 - **Stock Locations for WooCommerce (SLW)** — optional integration syncs per-location stock and respects customer location selections
-- **Configurable VAT-inclusive pricing** — percentage or flat markup, free shipping threshold and flat-rate fallback are treated as the customer's final gross charge; WooCommerce records the matching net shipping and tax without adding VAT twice
+- **Tax-aware configurable pricing** — VAT-inclusive carrier quotes are split into net shipping plus one tax charge; merchant-entered fallback and own-vehicle prices follow WooCommerce's “prices entered with tax” setting, supporting gross retail and ex-VAT wholesale stores
 - **Rate caching** — 15-minute transient cache per location/destination/parcel combination
 - **WP Cron stock sync** — syncs ERPNext Bin data every 15 minutes (configurable)
 

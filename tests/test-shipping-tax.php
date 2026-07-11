@@ -1,5 +1,12 @@
 <?php
 
+es_test( 'merchant-entered shipping follows Woo prices-entered-with-tax mode', function () {
+	es_eq( true, ES_Shipping_Tax::configured_amount_includes_tax( true ), 'Woo boolean inclusive mode accepted' );
+	es_eq( true, ES_Shipping_Tax::configured_amount_includes_tax( 'yes' ), 'stored inclusive setting accepted' );
+	es_eq( false, ES_Shipping_Tax::configured_amount_includes_tax( false ), 'Woo boolean exclusive mode preserved' );
+	es_eq( false, ES_Shipping_Tax::configured_amount_includes_tax( 'no' ), 'stored exclusive setting preserved' );
+} );
+
 es_test( 'VAT-inclusive shipping is split into one Woo tax charge', function () {
 	// R100 gross at 15% VAT: Woo stores R86.9565 net + R13.0435 tax.
 	$tax = 100 - ( 100 / 1.15 );
