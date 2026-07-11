@@ -226,6 +226,14 @@ class ES_Carrier_Booking {
 			&& (float) $confirmation['fresh_rate'] > 0;
 	}
 
+	/** Require the immediately-pre-book quote to match the operator-confirmed cents. */
+	public static function confirmation_rate_matches( array $confirmation, $fresh_rate ) {
+		return is_numeric( $confirmation['fresh_rate'] ?? null )
+			&& is_numeric( $fresh_rate )
+			&& (float) $fresh_rate > 0
+			&& round( (float) $confirmation['fresh_rate'], 2 ) === round( (float) $fresh_rate, 2 );
+	}
+
 	public static function canonical_address( array $address ) {
 		return array(
 			'street_address' => trim( (string) ( $address['street_address'] ?? '' ) ),

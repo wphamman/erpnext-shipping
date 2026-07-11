@@ -195,6 +195,20 @@ class ES_Carrier_Booking_Admin {
 			wp_send_json_error( array( 'message' => __( 'The live quote expired or the order changed. Check the cost again.', 'erpnext-shipping' ) ) );
 		}
 
+		// Re-quote immediately before the irreversible call. The confirmation is
+		// only valid for the exact service and exact cents the operator approved;
+		// any provider price movement requires a fresh visible confirmation.
+		$book_rate = self::fresh_rate( $effective, $valid, $effective[ ES_Carrier_Booking::M_PROVIDER ] );
+		if ( empty( $book_rate['ok'] ) || ! ES_Carrier_Booking::confirmation_rate_matches( $confirm, $book_rate['rate'] ?? null ) ) {
+			self::persist_outcome( $order, array(
+				'state'        => ES_Carrier_Booking::STATE_ERROR,
+				'error'        => __( 'The carrier price or service changed after confirmation. Nothing was booked — check the live cost again.', 'erpnext-shipping' ),
+				'shipment_id'  => '',
+				'tracking_ref' => '',
+			) );
+			wp_send_json_error( array( 'message' => __( 'The carrier price or service changed. Check the live cost again.', 'erpnext-shipping' ) ) );
+		}
+
 		$client = self::client( $effective, $valid['settings'] );
 		$args   = self::booking_args( $order, $effective, $valid );
 		$result = $client ? $client->create_shipment( $args ) : array( 'ok' => false, 'http' => 400, 'error' => 'Carrier is not configured.' );
@@ -479,7 +493,7 @@ class ES_Carrier_Booking_Admin {
 	private static function can_book() { return current_user_can( apply_filters( 'es_carrier_book_capability', 'manage_woocommerce' ) ); }
 	private static function can_labels() { return class_exists( 'ES_Warehouse_Role' ) ? ES_Warehouse_Role::current_user_can_fulfill() : current_user_can( 'manage_woocommerce' ); }
 	private static function mint_token() { return function_exists( 'wp_generate_uuid4' ) ? wp_generate_uuid4() : uniqid( 'es', true ); }
-	private static function acquire_lock( $order_id, $token, $lease ) { return add_option( self::LOCK_PREFIX . $order_id, $token . '|' . ( time() + max( 120, (int) $lease ) ), '', false ); }
-	public static function release_lock( $order_id, $token ) { $key=self::LOCK_PREFIX.$order_id;$raw=(string)get_option($key,'');if(0===strpos($raw,$token.'|'))delete_option($key); }
-	private static function lock_state( $order_id ) { $raw=(string)get_option(self::LOCK_PREFIX.$order_id,'');$p=explode('|',$raw,2);return array('exists'=>''!==$raw,'stale'=>''!==$raw && time()>(int)($p[1]??PHP_INT_MAX)); }
+	private static function acquire_lock( $order_id, $token, $lease ) { return ES_Option_Mutex::acquire( self::LOCK_PREFIX . (int) $order_id, $token, max( 120, (int) $lease ) ); }
+	public static function release_lock( $order_id, $token ) { return ES_Option_Mutex::release( self::LOCK_PREFIX . (int) $order_id, $token ); }
+	private static function lock_state( $order_id ) { return ES_Option_Mutex::state( self::LOCK_PREFIX . (int) $order_id ); }
 }

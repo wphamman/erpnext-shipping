@@ -693,9 +693,9 @@ class ES_TCG_Locker_Admin {
 	}
 
 	/**
-	 * Acquire the per-order booking lock. add_option() performs an atomic INSERT
-	 * against the UNIQUE option_name index, so exactly ONE concurrent caller wins —
-	 * a held lock always loses. There is deliberately NO automatic stale takeover
+	 * Acquire the per-order booking lock with a single INSERT IGNORE against the
+	 * UNIQUE option_name index, so exactly ONE concurrent caller wins. There is
+	 * deliberately NO automatic stale takeover
 	 * here: a takeover would need a delete-then-reinsert that two racers could both
 	 * win, admitting two owners. So acquire is pure and provably single-owner; a
 	 * lock stranded by a hard crash (whose shutdown release did not run) is recovered
@@ -711,8 +711,7 @@ class ES_TCG_Locker_Admin {
 	 * @param int $lease_seconds Lease duration for this request (from the snapshot).
 	 */
 	private static function acquire_lock( $order_id, $token, $lease_seconds ) {
-		$expiry = time() + max( 1, (int) $lease_seconds );
-		return (bool) add_option( self::LOCK_PREFIX . (int) $order_id, $token . '|' . $expiry, '', 'no' );
+		return ES_Option_Mutex::acquire( self::LOCK_PREFIX . (int) $order_id, $token, $lease_seconds );
 	}
 
 	/**
@@ -724,17 +723,7 @@ class ES_TCG_Locker_Admin {
 	 * @return array{present:bool, expiry:int, stale:bool}
 	 */
 	private static function lock_state( $order_id ) {
-		$raw = (string) get_option( self::LOCK_PREFIX . (int) $order_id, '' );
-		if ( '' === $raw ) {
-			return array( 'present' => false, 'expiry' => 0, 'stale' => false );
-		}
-		$parts  = explode( '|', $raw );
-		$expiry = (int) ( $parts[1] ?? 0 );
-		return array(
-			'present' => true,
-			'expiry'  => $expiry,
-			'stale'   => ( $expiry > 0 && time() > $expiry ),
-		);
+		return ES_Option_Mutex::state( self::LOCK_PREFIX . (int) $order_id );
 	}
 
 	/**
@@ -743,11 +732,7 @@ class ES_TCG_Locker_Admin {
 	 * shutdown callback can invoke it from outside class scope.
 	 */
 	public static function release_lock( $order_id, $token ) {
-		$key   = self::LOCK_PREFIX . (int) $order_id;
-		$parts = explode( '|', (string) get_option( $key, '' ) );
-		if ( isset( $parts[0] ) && $parts[0] === (string) $token ) {
-			delete_option( $key );
-		}
+		return ES_Option_Mutex::release( self::LOCK_PREFIX . (int) $order_id, $token );
 	}
 
 	/**

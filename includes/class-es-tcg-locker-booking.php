@@ -49,8 +49,8 @@ class ES_TCG_Locker_Booking {
 
 	// Booking-path mutex lease bound (consumed by ES_TCG_Locker_Admin's mutex).
 	const LOCK_PATH_CALLS = 3;   // get_locker + fresh get_rates + create_shipment.
-	const LOCK_MARGIN     = 60;  // WP/GC overhead + safety.
-	const LOCK_TTL_FLOOR  = 120;
+	const LOCK_MARGIN     = 120; // Order saves, notes, tracking I/O + safety.
+	const LOCK_TTL_FLOOR  = 180;
 
 	/**
 	 * Enforced upper bound (seconds) on how long a live booking request can hold the

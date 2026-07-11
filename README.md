@@ -208,6 +208,11 @@ erpnext-shipping/
 │   ├── class-es-carrier-base.php           # Abstract carrier interface
 │   ├── class-es-carrier-shiplogic.php      # The Courier Guy API
 │   ├── class-es-carrier-collivery.php      # MDS Collivery (API v3)
+│   ├── class-es-carrier-booking.php        # Pure door-booking confirmation/state contract
+│   ├── class-es-door-booking-client.php    # Portal-v2 TCG + MDS booking/document clients
+│   ├── class-es-carrier-booking-admin.php  # Unified two-stage booking UI + PDF proxy
+│   ├── class-es-shipping-tax.php           # Pure VAT-inclusive/net shipping split
+│   ├── class-es-option-mutex.php            # DB-atomic ownership-tokened spend/poll locks
 │   ├── class-es-fulfillment-statuses.php   # Custom order statuses + pickup resolver
 │   ├── class-es-fulfillment-tracking.php   # Tracking meta + AST-compatible REST API
 │   ├── class-es-fulfillment-admin.php      # Order list columns, actions, meta box, modal

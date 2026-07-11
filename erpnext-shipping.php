@@ -28,6 +28,7 @@ define( 'ES_TCG_LOCKER_SANDBOX_BASE', 'https://sandbox.api-pudo.co.za/api/v1' );
 require_once ES_SHIPPING_PATH . 'includes/class-es-carrier-booking.php';
 require_once ES_SHIPPING_PATH . 'includes/class-es-door-booking-client.php';
 require_once ES_SHIPPING_PATH . 'includes/class-es-shipping-tax.php';
+require_once ES_SHIPPING_PATH . 'includes/class-es-option-mutex.php';
 
 // Isolated TCG Locker API client. No side effects at load; required early so
 // both the admin settings screen and the shipping-method flow can use it.

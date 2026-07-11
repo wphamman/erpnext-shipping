@@ -8,6 +8,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Door shipping prices no longer receive VAT twice.** VAT-inclusive Courier Guy and MDS quotes are split through WooCommerce's active shipping tax rates into net shipping plus explicit tax, preserving the quoted gross while keeping `shipping_total` and `shipping_tax` distinct for ERPNext sync. Merchant-entered fallback and own-vehicle prices follow WooCommerce's store-wide “prices entered with tax” mode, preserving gross retail settings and ex-VAT wholesale settings. TCG Locker remains on its existing VAT-reconciled path.
+- **Courier Guy booking and document calls now use the current Portal v2 API.** Shipment creation, waybill and sticker requests moved from the retired `api.shiplogic.com` host to `api.portal.thecourierguy.co.za/v2`; signed PDFs are restricted to the hosts allowlisted by The Courier Guy's current official WooCommerce plugin.
+- **Booking spend locks are genuinely database-atomic.** Door and Locker booking now acquire with one `INSERT IGNORE` against the unique option-name index instead of WordPress `add_option()`'s duplicate-key update path; release is an ownership-checked conditional delete. Concurrent tabs/retries cannot both enter the irreversible provider call.
+- **The fulfilment poll mutex is atomic and long-lived enough for a full batch.** Cron and Diagnostics runs share an immutable one-hour option lease with safe atomic stale takeover, preventing overlapping carrier polling. Custom tracking entries and newly-booked waybills awaiting carrier indexing no longer create false watchdog failures.
+- **Door booking re-quotes at the final spend boundary.** The exact service and cents must still match the operator-confirmed quote immediately before shipment creation; any drift requires a new visible confirmation.
+- Missing/deleted cart products now fail explicitly to the configured fallback instead of throwing during live quoting, enabled-carrier changes invalidate the relevant quote-cache namespace, and Locker rates use the same active Woo tax split so a store without a shipping-tax rate cannot be undercharged.
 
 ## [1.14.0] - 2026-07-11
 

@@ -592,6 +592,11 @@ class ES_Shipping_Method extends WC_Shipping_Method {
 
         // 3. Get fulfillment plan from ERPNext stock (non-blocking — uses cached data only, never syncs during checkout).
         $cart_items = $this->get_cart_items( $package );
+        if ( ! empty( $package['contents'] ) && empty( $cart_items ) ) {
+            $this->log( 'One or more cart products could not be loaded; using the configured fallback rate.' );
+            $this->add_fallback_rate();
+            return;
+        }
         $sync = new ES_Stock_Sync( $this->get_erp_settings() );
 
         // 3a. Check if SLW per-item location selections override automatic routing.
@@ -668,6 +673,10 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             floatval( $this->get_option( 'default_height', 10 ) )
         );
         $cache = new ES_Rate_Cache();
+		$carrier_signature = array();
+		foreach ( $carriers as $carrier ) {
+			$carrier_signature[] = $carrier->get_carrier_name();
+		}
 
         $is_split      = ( $plan['type'] === 'split' );
         $is_chooseable = ( $plan['type'] === 'chooseable' );
@@ -712,7 +721,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             $this->log( 'Location ' . $lq['location'] . ' parcels: ' . wp_json_encode( $parcels ) );
 
             // Check cache.
-            $cache_key = $cache->build_key( $origin, $destination, $parcels );
+            $cache_key = $cache->build_key( $origin, $destination, $parcels, $carrier_signature );
             $cached = $cache->get( $cache_key );
             if ( $cached !== false ) {
 				foreach ( $cached as &$cached_rate ) {
@@ -951,12 +960,15 @@ class ES_Shipping_Method extends WC_Shipping_Method {
 
         $meta = ES_TCG_Locker_Rate::build_rate_meta( $locker, $offer, $origin_id, $pricing, time(), $req['total_weight'] );
 
-        $this->add_rate( array(
+        if ( ! $this->add_tax_inclusive_rate( array(
             'id'        => $this->id . '_locker',
             'label'     => $label,
-            'cost'      => $pricing['rate_cost_ex_vat'],
+            'cost'      => $pricing['customer_charge_incl'],
             'meta_data' => $meta,
-        ) );
+        ) ) ) {
+            $this->log( 'TCG Locker: invalid VAT-inclusive tax split — not offered.' );
+            return false;
+        }
         $this->log( 'TCG Locker rate added: ' . $label . ' — box ' . ( $offer['box_size'] ?? $offer['box_code'] ?? '?' ) . ', customer R' . $pricing['customer_charge_incl'] );
         return true;
     }
@@ -1539,7 +1551,11 @@ class ES_Shipping_Method extends WC_Shipping_Method {
     private function get_cart_items( $package ) {
         $items = array();
         foreach ( $package['contents'] as $item ) {
-            $product = $item['data'];
+            $product = $item['data'] ?? null;
+            if ( ! $product || ! is_callable( array( $product, 'get_id' ) ) ) {
+                $this->log( 'Cart item product could not be loaded; live carrier quoting skipped.' );
+                return array();
+            }
             // Use SKU for stock lookup. Fall back to product ID for SKU-less products
             // to prevent them from collapsing into the same empty-key lookup.
             $sku = $product->get_sku();

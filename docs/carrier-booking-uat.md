@@ -44,6 +44,7 @@ For ERPNext Fusion, keep shipping on the normal taxable path: Woo's `shipping_to
 4. Do not click **Confirm & book** yet. Verify no shipment exists in the carrier portal.
 5. Change the order address or an item, then try the old confirmation: booking must refuse and require another cost check.
 6. Wait more than five minutes: the confirmation must expire.
+7. If the exact service price changes between checking and booking, the final action must refuse before creating anything and require a new visible confirmation.
 
 ## Authorised booking test
 

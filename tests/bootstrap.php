@@ -25,6 +25,7 @@ require dirname( __DIR__ ) . '/includes/class-es-tcg-locker-tracking.php';
 require dirname( __DIR__ ) . '/includes/class-es-carrier-booking.php';
 require dirname( __DIR__ ) . '/includes/class-es-door-booking-client.php';
 require dirname( __DIR__ ) . '/includes/class-es-shipping-tax.php';
+require dirname( __DIR__ ) . '/includes/class-es-option-mutex.php';
 
 $GLOBALS['es_test_pass']    = 0;
 $GLOBALS['es_test_fail']    = 0;

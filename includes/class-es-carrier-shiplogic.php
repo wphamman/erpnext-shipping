@@ -3,7 +3,7 @@ defined( 'ABSPATH' ) || exit;
 
 class ES_Carrier_ShipLogic extends ES_Carrier_Base {
 
-    const API_URL = 'https://api.portal.thecourierguy.co.za/rates';
+    const API_URL = 'https://api.portal.thecourierguy.co.za/v2/rates';
 
     private $api_token;
     private $company_name;

@@ -32,7 +32,7 @@ class ES_Door_Booking_WP_Transport implements ES_Door_Booking_Transport {
 }
 
 class ES_Door_Booking_Client {
-	const SHIPLOGIC_BASE = 'https://api.shiplogic.com';
+	const SHIPLOGIC_BASE = 'https://api.portal.thecourierguy.co.za/v2';
 	const COLLIVERY_BASE = 'https://api.collivery.co.za/v3';
 
 	private $provider;
@@ -285,7 +285,7 @@ class ES_Door_Booking_Client {
 		$host  = strtolower( (string) ( $parts['host'] ?? '' ) );
 		return is_array( $parts )
 			&& 'https' === ( $parts['scheme'] ?? '' )
-			&& ( 'labels.shiplogic.com' === $host || 'shiplogic-labels.s3.amazonaws.com' === $host );
+			&& ( 'labels.shiplogic.com' === $host || 'shiplogic-backend-prod-infra-label-pdfs.s3.af-south-1.amazonaws.com' === $host );
 	}
 
 	private function redact( $message ) {

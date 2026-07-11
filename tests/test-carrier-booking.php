@@ -67,6 +67,9 @@ es_test( 'booking confirmation expires and is bound to current order facts', fun
 	$current = es_door_current();
 	$snapshot[ ES_Carrier_Booking::M_PROVIDER ] = 'mds-collivery';
 	es_ok( ! ES_Carrier_Booking::confirmation_valid( $c, 'secret', $snapshot, $current, 1100 ), 'carrier override tampering rejected' );
+	es_ok( ES_Carrier_Booking::confirmation_rate_matches( $c, 100.0 ), 'exact confirmed cents accepted at book time' );
+	es_ok( ! ES_Carrier_Booking::confirmation_rate_matches( $c, 100.01 ), 'one-cent provider movement requires reconfirmation' );
+	es_ok( ! ES_Carrier_Booking::confirmation_rate_matches( $c, null ), 'missing pre-book quote fails closed' );
 } );
 
 es_test( 'ShipLogic payload uses exact service, contacts and parcel geometry', function () {
@@ -104,6 +107,7 @@ es_test( 'provider clients parse booking ids without leaking credentials', funct
 	$c = new ES_Door_Booking_Client( ES_Carrier_Booking::PROVIDER_TCG, '62429|secret', $t );
 	$r = $c->create_shipment( array( 'service' => 'ECO', 'parcels' => array( array( 'weight_kg' => 1, 'length_cm' => 1, 'width_cm' => 1, 'height_cm' => 1 ) ) ) );
 	es_eq( true, $r['ok'], 'ShipLogic creation parsed' );
+	es_eq( 'https://api.portal.thecourierguy.co.za/v2/shipments', $t->calls[0]['url'], 'current portal v2 shipment endpoint used' );
 	es_eq( '88', $r['shipment_id'], 'ShipLogic id parsed' );
 	es_eq( 'TCG123', $r['tracking_ref'], 'ShipLogic tracking parsed' );
 	es_not_contains( $t->calls[0]['url'], 'secret', 'Bearer secret not in URL' );
@@ -123,11 +127,18 @@ es_test( 'native provider documents are proxied only as real PDFs', function () 
 	$c = new ES_Door_Booking_Client( ES_Carrier_Booking::PROVIDER_TCG, 'token', $t );
 	$r = $c->fetch_document( 'waybill', 88 );
 	es_eq( true, $r['ok'], 'signed ShipLogic PDF accepted' );
+	es_eq( 'https://api.portal.thecourierguy.co.za/v2/shipments/label?id=88', $t->calls[0]['url'], 'current portal v2 label endpoint used' );
 	es_eq( $pdf, $r['body'], 'ShipLogic PDF preserved' );
 	$tbad = new ES_Door_Fake_Transport();
 	$tbad->push( 200, json_encode( array( 'url' => 'https://127.0.0.1/internal' ) ) );
 	$cbad = new ES_Door_Booking_Client( ES_Carrier_Booking::PROVIDER_TCG, 'token', $tbad );
 	es_eq( false, $cbad->fetch_document( 'waybill', 88 )['ok'], 'provider-controlled SSRF URL rejected' );
+	$tcurrent = new ES_Door_Fake_Transport();
+	$tcurrent->push( 200, json_encode( array( 'url' => 'https://shiplogic-backend-prod-infra-label-pdfs.s3.af-south-1.amazonaws.com/signed/waybill.pdf' ) ) )->push( 200, $pdf, null, 'application/pdf' );
+	es_eq( true, ( new ES_Door_Booking_Client( ES_Carrier_Booking::PROVIDER_TCG, 'token', $tcurrent ) )->fetch_document( 'waybill', 88 )['ok'], 'current official signed-PDF S3 host accepted' );
+	$told = new ES_Door_Fake_Transport();
+	$told->push( 200, json_encode( array( 'url' => 'https://shiplogic-labels.s3.amazonaws.com/old.pdf' ) ) );
+	es_eq( false, ( new ES_Door_Booking_Client( ES_Carrier_Booking::PROVIDER_TCG, 'token', $told ) )->fetch_document( 'waybill', 88 )['ok'], 'unconfirmed legacy S3 host rejected' );
 
 	$t2 = new ES_Door_Fake_Transport();
 	$t2->push( 200, json_encode( array( 'data' => array( 'image' => base64_encode( $pdf ) ) ) ) );

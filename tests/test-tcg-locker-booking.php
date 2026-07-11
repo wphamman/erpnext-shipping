@@ -185,16 +185,16 @@ es_test( 'detect_drift: a snapshot missing its service code refuses', function (
 	es_eq( 'no_persisted_service', $d['reason'], 'reason no_persisted_service' );
 } );
 
-es_test( 'lock_stale_threshold: derived from the configured timeout (never a fixed 120s)', function () {
+es_test( 'lock_stale_threshold: derived from timeout plus order-write safety margin', function () {
 	// Default/absent timeout → the client default (15) drives the bound, floored.
-	es_eq( 120, ES_TCG_Locker_Booking::lock_stale_threshold( 0 ), 'absent → floor (3*15+60=105 < 120 floor)' );
-	es_eq( 120, ES_TCG_Locker_Booking::lock_stale_threshold( 15 ), 'default 15 → floored at 120' );
-	es_eq( 120, ES_TCG_Locker_Booking::lock_stale_threshold( -5 ), 'negative → treated as default → floor' );
+	es_eq( 180, ES_TCG_Locker_Booking::lock_stale_threshold( 0 ), 'absent → 180s floor' );
+	es_eq( 180, ES_TCG_Locker_Booking::lock_stale_threshold( 15 ), 'default 15 → floored at 180' );
+	es_eq( 180, ES_TCG_Locker_Booking::lock_stale_threshold( -5 ), 'negative → treated as default → floor' );
 
-	// A raised timeout raises the threshold in lock-step: 3*call + 60 margin.
-	es_eq( 3 * 30 + 60, ES_TCG_Locker_Booking::lock_stale_threshold( 30 ), 'timeout 30 → 150s' );
-	es_eq( 3 * 120 + 60, ES_TCG_Locker_Booking::lock_stale_threshold( 120 ), 'timeout 120 → 420s (a live 120s request is NOT yet stale)' );
-	es_eq( 3 * 600 + 60, ES_TCG_Locker_Booking::lock_stale_threshold( 600 ), 'uncapped high timeout still bounds correctly' );
+	// A raised timeout raises the threshold in lock-step: 3*call + 120s writes margin.
+	es_eq( 3 * 30 + 120, ES_TCG_Locker_Booking::lock_stale_threshold( 30 ), 'timeout 30 → 210s' );
+	es_eq( 3 * 120 + 120, ES_TCG_Locker_Booking::lock_stale_threshold( 120 ), 'timeout 120 → 480s (plus writes)' );
+	es_eq( 3 * 600 + 120, ES_TCG_Locker_Booking::lock_stale_threshold( 600 ), 'uncapped high timeout still bounds correctly' );
 
 	// The bound must always strictly exceed the single worst-case call so a live
 	// request mid-provider-call can never be seen as stale.

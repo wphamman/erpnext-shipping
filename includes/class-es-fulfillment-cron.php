@@ -45,8 +45,10 @@ class ES_Fulfillment_Cron {
         32 => 'delivered',  // Completed
     );
 
-    /** Transient name for the cron/manual-run mutex (60s TTL). */
+    /** Option name for the database-atomic cron/manual-run mutex. */
     const LOCK_KEY = 'es_poll_lock';
+    /** Immutable lease long enough for a full batch, including slow providers. */
+    const LOCK_LEASE = 3600;
     /** Option name for the most-recent poll cycle summary. */
     const SUMMARY_OPTION = 'es_last_poll_summary';
 
@@ -54,12 +56,13 @@ class ES_Fulfillment_Cron {
      * Run the polling job.
      */
     public static function poll() {
-        // Mutex: prevent cron and the Diagnostics "Run now" button from running
-        // simultaneously, which would double-hit carrier APIs.
-        if ( get_transient( self::LOCK_KEY ) ) {
+        // One-statement mutex: prevent cron and Diagnostics "Run now" from
+        // concurrently hitting carrier APIs. The immutable one-hour lease safely
+        // exceeds a full batch; ownership-checked release runs in finally.
+        $lock_token = function_exists( 'wp_generate_uuid4' ) ? wp_generate_uuid4() : uniqid( 'es-poll-', true );
+        if ( ! ES_Option_Mutex::acquire_or_replace_stale( self::LOCK_KEY, $lock_token, self::LOCK_LEASE ) ) {
             return;
         }
-        set_transient( self::LOCK_KEY, time(), 60 );
 
         $logger   = wc_get_logger();
         $ctx      = array( 'source' => 'erpnext-shipping-fulfillment' );
@@ -190,7 +193,7 @@ class ES_Fulfillment_Cron {
             // wc_get_orders call or a per-order poll throws.
             $summary['duration_ms'] = (int) ( microtime( true ) * 1000 ) - $start_ms;
             update_option( self::SUMMARY_OPTION, $summary, false );
-            delete_transient( self::LOCK_KEY );
+            ES_Option_Mutex::release( self::LOCK_KEY, $lock_token );
         }
     }
 
@@ -231,6 +234,11 @@ class ES_Fulfillment_Cron {
 
             $result    = null;
             $canonical = ES_Fulfillment_Tracking::normalize_provider( $provider );
+			if ( ! in_array( $canonical, array( 'the-courier-guy', 'mds-collivery', 'tcg-locker' ), true ) ) {
+				// A manual/custom tracking item has no API integration to poll. It is
+				// not a carrier failure and must not inflate watchdog alerts.
+				continue;
+			}
 
             if ( 'the-courier-guy' === $canonical && ! empty( $tcg_token ) ) {
                 $result = self::poll_tcg( $tcg_token, $number, $logger, $ctx );
@@ -254,7 +262,15 @@ class ES_Fulfillment_Cron {
                 if ( $result['wc_status'] ) {
                     $item_statuses[] = $result['wc_status'];
                 }
-            } elseif ( ! empty( $provider ) ) {
+			} elseif (
+				in_array( $canonical, array( 'the-courier-guy', 'mds-collivery' ), true )
+				&& (int) $order->get_meta( ES_Carrier_Booking::M_BOOKED_TS, true ) > time() - 900
+			) {
+				// Newly-created waybills can take a few minutes to become visible to
+				// tracking. Record a stable no-op instead of a false watchdog failure.
+				$per_provider[ $canonical ]['successes']++;
+				$raw_statuses[] = ( 'the-courier-guy' === $canonical ? 'tcg' : 'mds' ) . ':awaiting-index';
+			} elseif ( ! empty( $provider ) ) {
                 $per_provider[ $canonical ]['failures']++;
                 $had_failure = true;
             }
