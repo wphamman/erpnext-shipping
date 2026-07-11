@@ -63,7 +63,12 @@ class ES_TCG_Locker_Rate {
 			return array( 'ok' => false, 'reason' => 'invalid_provider_rate' );
 		}
 		$provider_incl = (float) $offer['rate'];
-		$provider_ex   = isset( $offer['rate_excluding_vat'] ) && is_numeric( $offer['rate_excluding_vat'] ) ? (float) $offer['rate_excluding_vat'] : null;
+		// A usable ex-VAT figure must be strictly positive. A present-but-zero or
+		// negative rate_excluding_vat is malformed and must NOT flow through as the
+		// WooCommerce cost (that would produce a free/negative locker rate off an
+		// otherwise valid positive inclusive rate). Treat it as absent → the ex-VAT
+		// cost is derived from the positive inclusive rate below (fail closed).
+		$provider_ex   = isset( $offer['rate_excluding_vat'] ) && is_numeric( $offer['rate_excluding_vat'] ) && (float) $offer['rate_excluding_vat'] > 0 ? (float) $offer['rate_excluding_vat'] : null;
 
 		$free = ( $free_threshold > 0 && $cart_total >= $free_threshold );
 

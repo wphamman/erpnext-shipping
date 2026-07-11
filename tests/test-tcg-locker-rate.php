@@ -68,6 +68,24 @@ es_test( 'pricing FAILS CLOSED on a malformed/absent provider rate (never free)'
 	es_ok( empty( ES_TCG_Locker_Rate::compute_pricing( $nan, 'live', 0, 0, 500 )['ok'] ), 'non-numeric rate → not ok' );
 } );
 
+es_test( 'live pricing FAILS SAFE on malformed rate_excluding_vat (never free/negative)', function () use ( $OFFER ) {
+	// A valid positive inclusive rate but a zero/negative/non-numeric ex-VAT
+	// must NOT pass the corrupt ex-VAT through as the WooCommerce cost. It falls
+	// back to deriving ex-VAT from the inclusive rate, so the cost stays positive.
+	foreach ( array( 0, 0.0, -1, -50.0, 'abc', '' ) as $bad ) {
+		$o        = $OFFER;
+		$o['rate_excluding_vat'] = $bad;
+		$p        = ES_TCG_Locker_Rate::compute_pricing( $o, 'live', 0, 0, 500 );
+		es_ok( ! empty( $p['ok'] ), 'still ok (inclusive rate is valid): ex=' . var_export( $bad, true ) );
+		es_eq( 'live', $p['pricing_mode'], 'mode live: ex=' . var_export( $bad, true ) );
+		es_close( 92.00, $p['customer_charge_incl'], 1e-9, 'customer charge = provider incl: ex=' . var_export( $bad, true ) );
+		es_close( 92.00 / 1.15, $p['rate_cost_ex_vat'], 0.01, 'ex-VAT DERIVED from inclusive (not the corrupt figure): ex=' . var_export( $bad, true ) );
+		es_ok( $p['rate_cost_ex_vat'] > 0, 'ex-VAT cost strictly positive — never free/negative: ex=' . var_export( $bad, true ) );
+		es_close( 92.00, $p['rate_cost_ex_vat'] * 1.15, 0.01, 'reconciles to provider incl: ex=' . var_export( $bad, true ) );
+		es_eq( null, $p['provider_rate_ex_vat'], 'corrupt provider ex-VAT recorded as null: ex=' . var_export( $bad, true ) );
+	}
+} );
+
 es_test( 'fixed pricing with 0/absent amount FAILS CLOSED (misconfig, not free)', function () use ( $OFFER ) {
 	$p = ES_TCG_Locker_Rate::compute_pricing( $OFFER, 'fixed', 0, 0, 500 );
 	es_ok( empty( $p['ok'] ), 'fixed 0 → not ok' );

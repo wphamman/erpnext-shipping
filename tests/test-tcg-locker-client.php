@@ -79,6 +79,26 @@ es_test( '/rates drops services with no positive price (fail closed)', function 
 	es_eq( 'L2LL - ECO', $res['offers'][0]['service_code'], 'the surviving offer is the priced L' );
 } );
 
+es_test( '/rates keeps a valid inclusive rate but nulls a non-positive rate_excluding_vat', function () {
+	// Valid positive inclusive rate=92 but a malformed ex-VAT (0). The offer must
+	// survive (inclusive rate is usable) yet carry rate_excluding_vat=null so the
+	// ex-VAT cost is later derived from the inclusive rate, never passed through 0.
+	$body = '{"rates":[{"service_level":{"code":"L2LL - ECO","box_type":"13","box_type_name":"V4-L","dimensions":{}},"rate":92,"rate_excluding_vat":0,"rate_revision_id":"r"}]}';
+	$tx   = ( new ES_Fake_Transport() )->push( 200, $body );
+	$c    = new ES_TCG_Locker_Client( ES_TEST_BASE, 'T', $tx );
+	$res  = $c->get_rates( 'CG929' );
+	es_eq( 1, count( $res['offers'] ), 'offer survives — inclusive rate is valid' );
+	es_eq( 92.0, $res['offers'][0]['rate'], 'inclusive rate kept' );
+	es_eq( null, $res['offers'][0]['rate_excluding_vat'], 'non-positive ex-VAT normalised to null' );
+
+	// A negative ex-VAT is treated the same way.
+	$body2 = '{"rates":[{"service_level":{"code":"L2LL - ECO","box_type":"13","box_type_name":"V4-L","dimensions":{}},"rate":92,"rate_excluding_vat":-1,"rate_revision_id":"r"}]}';
+	$tx2   = ( new ES_Fake_Transport() )->push( 200, $body2 );
+	$c2    = new ES_TCG_Locker_Client( ES_TEST_BASE, 'T', $tx2 );
+	$res2  = $c2->get_rates( 'CG929' );
+	es_eq( null, $res2['offers'][0]['rate_excluding_vat'], 'negative ex-VAT normalised to null' );
+} );
+
 es_test( '/rates short cache: second call served from cache (no extra transport call)', function () {
 	$tx    = ( new ES_Fake_Transport() )->push( 200, es_fixture( 'rates-l2l.json' ) );
 	$cache = new ES_Array_Cache();

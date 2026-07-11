@@ -473,6 +473,15 @@ class ES_TCG_Locker_Client {
 				$this->log( 'warning', self::RATES_PATH . ' dropped service ' . $code . ' with no positive rate' );
 				continue;
 			}
+			// The ex-VAT figure is only kept when strictly positive. A present-but
+			// zero/negative rate_excluding_vat is malformed; drop it to null so the
+			// ex-VAT cost is derived from the positive inclusive rate downstream
+			// rather than passed through as a free/negative locker cost (fail closed).
+			$rate_ex = self::num_or_null( $r['rate_excluding_vat'] ?? null );
+			if ( null !== $rate_ex && $rate_ex <= 0 ) {
+				$this->log( 'warning', self::RATES_PATH . ' service ' . $code . ' has non-positive rate_excluding_vat; deriving ex-VAT from inclusive rate' );
+				$rate_ex = null;
+			}
 			$offers[] = array(
 				'service_code'       => $code,
 				'service_name'       => (string) ( $sl['name'] ?? '' ),
@@ -481,7 +490,7 @@ class ES_TCG_Locker_Client {
 				'box_size'           => self::derive_box_size( $sl['box_type_name'] ?? '' ),
 				'dimensions'         => $this->normalize_dims( $sl['dimensions'] ?? null ),
 				'rate'               => $rate,
-				'rate_excluding_vat' => self::num_or_null( $r['rate_excluding_vat'] ?? null ),
+				'rate_excluding_vat' => $rate_ex,
 				'rate_revision_id'   => (string) ( $r['rate_revision_id'] ?? '' ),
 			);
 		}
