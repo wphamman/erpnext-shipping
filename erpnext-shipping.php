@@ -39,6 +39,10 @@ require_once ES_SHIPPING_PATH . 'includes/class-es-tcg-locker-rate.php';
 // side effects; the WP-facing booking glue is ES_TCG_Locker_Admin (admin only).
 require_once ES_SHIPPING_PATH . 'includes/class-es-tcg-locker-booking.php';
 
+// Pure TCG Locker tracking status map (conservative forward-only §12). No side
+// effects; consumed by the fulfillment cron poller and the admin status display.
+require_once ES_SHIPPING_PATH . 'includes/class-es-tcg-locker-tracking.php';
+
 // Declare HPOS (High-Performance Order Storage) compatibility. The plugin already
 // uses HPOS-safe order APIs (wc_get_order, $order->get_meta, feature-detected order
 // list columns); this declaration stops WooCommerce flagging it as "incompatible"

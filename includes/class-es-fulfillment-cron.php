@@ -121,6 +121,13 @@ class ES_Fulfillment_Cron {
 
             $orders = array_merge( $unpolled, $polled );
 
+            // Phase 5: also poll BOOKED TCG Locker orders that are still pre-shipment
+            // (processing/on-hold). The tracking-items query above only selects
+            // completed/partially-shipped, so cron could otherwise never drive the
+            // first processing→Shipped transition for a locker order. Union in the
+            // meta-qualified locker set, de-duplicated and re-capped at BATCH_SIZE.
+            $orders = self::merge_locker_orders( $orders );
+
             if ( empty( $orders ) ) {
                 return;
             }
@@ -194,6 +201,11 @@ class ES_Fulfillment_Cron {
                 $result = self::poll_tcg( $tcg_token, $number, $logger, $ctx );
             } elseif ( 'mds-collivery' === $canonical && ! empty( $mds_token ) ) {
                 $result = self::poll_mds( $mds_token, $number, $logger, $ctx );
+            } elseif ( 'tcg-locker' === $canonical ) {
+                // TCG Locker uses its OWN authenticated client/token (the Courier-Guy
+                // portal token cannot see locker shipments), so it is not gated on
+                // $tcg_token. The client self-gates on being enabled + configured.
+                $result = self::poll_tcg_locker( $order, $number, $logger, $ctx );
             }
 
             if ( ! isset( $per_provider[ $canonical ] ) ) {
@@ -252,6 +264,70 @@ class ES_Fulfillment_Cron {
             'per_provider' => $per_provider,
             'raw_statuses' => $raw_statuses,
         );
+    }
+
+    /**
+     * Union booked TCG Locker orders into the poll set, de-duplicated and capped at
+     * BATCH_SIZE. Selects orders with a stored shipment id AND booking_status='booked'
+     * whose WC status is still pre-terminal (processing/on-hold/completed/partially-
+     * shipped) — 'delivered' is deliberately excluded so selection stops naturally at
+     * the terminal state (a delivered order is never re-polled). Anti-starvation:
+     * unpolled first, then oldest-polled (two queries to avoid a meta_query + meta_key
+     * JOIN conflict, mirroring the primary selection).
+     *
+     * @param array $orders Orders already selected by the primary (tracking-items) query.
+     * @return array Merged, de-duplicated, BATCH_SIZE-capped order list.
+     */
+    private static function merge_locker_orders( $orders ) {
+        if ( ! class_exists( 'ES_TCG_Locker_Booking' ) ) {
+            return $orders;
+        }
+        $have = array();
+        foreach ( $orders as $o ) {
+            $have[ $o->get_id() ] = true;
+        }
+        $statuses = array( 'processing', 'on-hold', 'completed', 'partially-shipped' );
+        $booked   = array(
+            array( 'key' => ES_TCG_Locker_Booking::M_SHIPMENT_ID, 'compare' => 'EXISTS' ),
+            array( 'key' => ES_TCG_Locker_Booking::M_BOOKING_STATUS, 'value' => 'booked', 'compare' => '=' ),
+        );
+
+        $add = function ( $found ) use ( &$orders, &$have ) {
+            foreach ( $found as $o ) {
+                $id = $o->get_id();
+                if ( ! isset( $have[ $id ] ) ) {
+                    $orders[] = $o;
+                    $have[ $id ] = true;
+                }
+            }
+        };
+
+        $remaining = self::BATCH_SIZE - count( $orders );
+        if ( $remaining > 0 ) {
+            $add( wc_get_orders( array(
+                'status'     => $statuses,
+                'meta_query' => array_merge( $booked, array(
+                    array( 'key' => '_es_last_polled', 'compare' => 'NOT EXISTS' ),
+                ) ),
+                'limit'      => $remaining,
+            ) ) );
+        }
+
+        $remaining = self::BATCH_SIZE - count( $orders );
+        if ( $remaining > 0 ) {
+            $add( wc_get_orders( array(
+                'status'     => $statuses,
+                'meta_query' => array_merge( $booked, array(
+                    array( 'key' => '_es_last_polled', 'compare' => 'EXISTS' ),
+                ) ),
+                'orderby'    => 'meta_value_num',
+                'meta_key'   => '_es_last_polled', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+                'order'      => 'ASC',
+                'limit'      => $remaining,
+            ) ) );
+        }
+
+        return $orders;
     }
 
     /**
@@ -366,6 +442,52 @@ class ES_Fulfillment_Cron {
         $mapped    = self::$mds_map[ $status_id ] ?? null;
 
         return array( 'raw' => 'mds:' . $status_id, 'wc_status' => $mapped );
+    }
+
+    /**
+     * Poll the authenticated TCG Locker tracking endpoint and map the status via
+     * the conservative forward-only §12 map. Uses the plugin's own client (Bearer),
+     * not the Courier-Guy portal token.
+     *
+     * CARRY-FORWARD: a booked shipment may have no tracking reference, in which case
+     * Phase-4 stored the SHIPMENT ID as the AST tracking number as a fallback — but a
+     * shipment id is NOT a valid waybill for this endpoint. So we always poll the
+     * PERSISTED tracking reference (the real waybill); when it is absent we record a
+     * stable no-op status rather than polling the shipment id or marking a failure.
+     *
+     * @return array{raw:string, wc_status:?string}|null
+     */
+    private static function poll_tcg_locker( $order, $tracking_number, $logger, $ctx ) {
+        if ( ! function_exists( 'es_tcg_locker_client' ) || ! class_exists( 'ES_TCG_Locker_Tracking' ) ) {
+            return null;
+        }
+        $waybill = (string) $order->get_meta( ES_TCG_Locker_Booking::M_TRACKING_REF, true );
+        if ( '' === $waybill ) {
+            // No real waybill (shipment-id fallback in the AST item) — cannot poll.
+            // Record a stable state; do not poll a shipment id, do not false-fail.
+            $logger->warning( 'TCG Locker: order ' . $order->get_id() . ' booked without a tracking reference; skipping poll (no valid waybill).', $ctx );
+            return array( 'raw' => 'tcg-locker:no-tracking-ref', 'wc_status' => null );
+        }
+
+        $client = es_tcg_locker_client();
+        if ( ! $client ) {
+            $logger->warning( 'TCG Locker: client not configured; cannot poll order ' . $order->get_id() . '.', $ctx );
+            return null;
+        }
+
+        $res = $client->get_tracking( $waybill );
+        if ( empty( $res['ok'] ) ) {
+            // The client redacts its own token; log only the order + waybill.
+            $logger->error( 'TCG Locker poll failed for order ' . $order->get_id() . ' (waybill ' . $waybill . ').', $ctx );
+            return null;
+        }
+
+        $raw    = strtolower( trim( (string) ( $res['status'] ?? '' ) ) );
+        $mapped = ES_TCG_Locker_Tracking::map_status( $raw ); // 'completed' | 'delivered' | null.
+        return array(
+            'raw'       => 'tcg-locker:' . ( '' !== $raw ? $raw : 'unknown' ),
+            'wc_status' => $mapped,
+        );
     }
 
     /**

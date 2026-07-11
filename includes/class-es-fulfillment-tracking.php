@@ -25,6 +25,14 @@ class ES_Fulfillment_Tracking {
             'url'     => 'https://www.collivery.co.za/tracking/%s',
             'aliases' => array( 'collivery', 'mds', 'mds collivery' ),
         ),
+        // TCG Locker (PUDO) locker-to-locker. Tracking is AUTHENTICATED-only
+        // (Bearer GET /api/v1/tracking/shipments) — there is no public URL
+        // template, so `url` is empty and the number renders without a link.
+        'tcg-locker' => array(
+            'name'    => 'TCG Locker',
+            'url'     => '',
+            'aliases' => array( 'tcg locker', 'tcglocker', 'pudo', 'pudo locker', 'pudo-locker' ),
+        ),
     );
 
     /**

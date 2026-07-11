@@ -359,7 +359,7 @@ class ES_Fulfillment_Admin {
         // May contain comma-separated statuses for multi-parcel orders.
         $statuses = array_map( 'trim', explode( ',', $courier_status ) );
         foreach ( $statuses as $raw ) {
-            $label = self::$courier_status_labels[ $raw ] ?? $raw;
+            $label = self::status_label( $raw );
             $color = self::get_status_dot_color( $raw );
             echo '<span class="es-courier-badge" style="color:' . esc_attr( $color ) . ';">';
             echo '<span class="es-dot" style="background:' . esc_attr( $color ) . ';"></span> ';
@@ -372,6 +372,21 @@ class ES_Fulfillment_Admin {
         if ( $last_polled ) {
             echo '<small style="color:#999;">' . esc_html( date_i18n( 'M j, g:i a', $last_polled ) ) . '</small>';
         }
+    }
+
+    /**
+     * Display label for a stored `_es_courier_status` token. Falls back to the pure
+     * TCG Locker humaniser for `tcg-locker:<status>` tokens (which are not in the
+     * static courier label map), else the raw token.
+     */
+    private static function status_label( $raw ) {
+        if ( isset( self::$courier_status_labels[ $raw ] ) ) {
+            return self::$courier_status_labels[ $raw ];
+        }
+        if ( class_exists( 'ES_TCG_Locker_Tracking' ) && 0 === strpos( $raw, 'tcg-locker:' ) ) {
+            return 'TCG Locker: ' . ES_TCG_Locker_Tracking::label( substr( $raw, strlen( 'tcg-locker:' ) ) );
+        }
+        return $raw;
     }
 
     private static function get_status_dot_color( $raw ) {
@@ -1025,7 +1040,7 @@ class ES_Fulfillment_Admin {
             <div style="padding:8px 0; border-bottom:1px solid #eee;">
                 <strong><?php esc_html_e( 'Courier Status', 'erpnext-shipping' ); ?></strong><br>
                 <?php foreach ( $statuses_raw as $raw ) :
-                    $label = self::$courier_status_labels[ $raw ] ?? $raw;
+                    $label = self::status_label( $raw );
                     $color = self::get_status_dot_color( $raw );
                 ?>
                     <span class="es-courier-badge" style="color:<?php echo esc_attr( $color ); ?>;">
