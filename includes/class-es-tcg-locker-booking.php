@@ -47,6 +47,32 @@ class ES_TCG_Locker_Booking {
 	/** Provider (VAT-inclusive) rate drift tolerance, in ZAR. */
 	const PRICE_EPSILON = 0.01;
 
+	// Booking-path mutex lease bound (consumed by ES_TCG_Locker_Admin's mutex).
+	const LOCK_PATH_CALLS = 3;   // get_locker + fresh get_rates + create_shipment.
+	const LOCK_MARGIN     = 60;  // WP/GC overhead + safety.
+	const LOCK_TTL_FLOOR  = 120;
+
+	/**
+	 * Enforced upper bound (seconds) on how long a live booking request can hold the
+	 * per-order mutex: every provider call in the booking path at the CONFIGURED
+	 * per-call timeout, plus margin, floored. A fixed threshold is unsafe because the
+	 * API timeout is merchant-configurable and uncapped — with a high timeout a
+	 * legitimate request could still be running, and a fixed 120s would let the
+	 * operator clear delete its live lock. Deriving from the timeout makes the
+	 * threshold rise in lock-step, so a live request is never mistaken for a dead one.
+	 * Pure + static so this correctness-critical bound is unit-tested.
+	 *
+	 * @param int $timeout Configured per-call API timeout (seconds); <=0 → default.
+	 * @return int
+	 */
+	public static function lock_stale_threshold( $timeout ) {
+		$timeout = (int) $timeout;
+		if ( $timeout <= 0 ) {
+			$timeout = class_exists( 'ES_TCG_Locker_Client' ) ? ES_TCG_Locker_Client::DEFAULT_TIMEOUT : 15;
+		}
+		return max( self::LOCK_TTL_FLOOR, self::LOCK_PATH_CALLS * $timeout + self::LOCK_MARGIN );
+	}
+
 	/** 4xx statuses where the request may still have been accepted/processed. */
 	private static $ambiguous_http = array( 408, 409, 429 );
 

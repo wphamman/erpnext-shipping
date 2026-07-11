@@ -34,9 +34,8 @@ defined( 'ABSPATH' ) || exit;
 
 class ES_TCG_Locker_Admin {
 
-	/** Atomic booking mutex: option-name prefix + stale-lock TTL (seconds). */
+	/** Atomic booking mutex option-name prefix. */
 	const LOCK_PREFIX = 'es_tcg_locker_booking_lock_';
-	const LOCK_TTL    = 120;
 
 	/** AST tracking provider slug for booked locker shipments (Phase-5 poll target). */
 	const TRACKING_PROVIDER = 'tcg-locker';
@@ -438,10 +437,11 @@ class ES_TCG_Locker_Admin {
 	 * shipment id. Always exits via wp_send_json_*.
 	 *
 	 * CRUCIALLY it refuses while the lock is still FRESH — a fresh lock means a
-	 * booking request is genuinely in flight right now (LOCK_TTL comfortably exceeds
-	 * a booking request's wall time), so clearing would let a second booking run
-	 * against a live provider call. It only proceeds when the lock is absent or stale
-	 * (holder presumed dead), and only then force-releases it.
+	 * booking request is genuinely in flight right now (the stale threshold from
+	 * lock_ttl() is an enforced upper bound on the whole booking path at the
+	 * configured timeout, so a live request is never yet "stale"), so clearing would
+	 * let a second booking run against a live provider call. It only proceeds when
+	 * the lock is absent or stale (holder presumed dead), and only then releases it.
 	 */
 	private static function handle_clear( $order ) {
 		$shipment_id = (string) $order->get_meta( ES_TCG_Locker_Booking::M_SHIPMENT_ID, true );
@@ -700,7 +700,8 @@ class ES_TCG_Locker_Admin {
 
 	/**
 	 * Read the current lock state: whether one is present, its acquire timestamp,
-	 * and whether it is stale (older than LOCK_TTL → its holder is presumed dead).
+	 * and whether it is stale (older than lock_ttl() → its holder is presumed dead
+	 * because no live booking request can run that long).
 	 *
 	 * @return array{present:bool, ts:int, stale:bool}
 	 */
@@ -714,8 +715,20 @@ class ES_TCG_Locker_Admin {
 		return array(
 			'present' => true,
 			'ts'      => $ts,
-			'stale'   => ( $ts > 0 && ( time() - $ts ) > self::LOCK_TTL ),
+			'stale'   => ( $ts > 0 && ( time() - $ts ) > self::lock_ttl() ),
 		);
+	}
+
+	/**
+	 * Stale threshold for THIS store's configured API timeout. Reads the timeout the
+	 * booking client actually uses and defers to the pure, unit-tested bound in
+	 * ES_TCG_Locker_Booking::lock_stale_threshold() — derived (not fixed) so raising
+	 * the timeout raises the threshold in lock-step and a live request is never
+	 * mistaken for a dead one.
+	 */
+	private static function lock_ttl() {
+		$opts = function_exists( 'es_tcg_locker_settings' ) ? es_tcg_locker_settings() : array();
+		return ES_TCG_Locker_Booking::lock_stale_threshold( (int) ( $opts['tcg_locker_rate_timeout'] ?? 0 ) );
 	}
 
 	/**
