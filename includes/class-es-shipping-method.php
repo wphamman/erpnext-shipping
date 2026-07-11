@@ -837,12 +837,16 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 $meta['_es_is_split'] = '1';
             }
 
-            $this->add_rate( array(
+            $added = $this->add_tax_inclusive_rate( array(
                 'id'        => $this->id . '_' . $tier,
                 'label'     => $label,
                 'cost'      => $cost,
                 'meta_data' => $meta,
             ) );
+            if ( ! $added ) {
+                $this->log( 'Rate skipped: invalid VAT-inclusive tax split for ' . $label . '.' );
+                continue;
+            }
             $this->log( 'Rate added: ' . $label . ' R' . $cost . ' (' . $rate['carrier'] . ')' );
         }
     }
@@ -1072,12 +1076,15 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 $meta['Free Above'] = 'R' . wc_format_decimal( $band['free_threshold'], 2 );
             }
 
-            $this->add_rate( array(
+            if ( ! $this->add_tax_inclusive_rate( array(
                 'id'        => $this->id . '_bulk_delivery',
                 'label'     => $label,
                 'cost'      => $cost,
                 'meta_data' => $meta,
-            ) );
+            ) ) ) {
+                $this->log( 'Own vehicle delivery skipped: invalid VAT-inclusive tax split.' );
+                return false;
+            }
 
             $this->log( 'Own vehicle delivery added from band ' . $band['label'] . ': ' . round( $priced_distance_km, 1 ) . 'km, cost R' . $cost . ( $is_free ? ' (free threshold met)' : '' ) );
             return true;
@@ -1099,7 +1106,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
         $is_free        = $free_threshold > 0 && $cart_total >= $free_threshold;
         $cost           = $is_free ? 0 : ceil( ( $priced_distance_km * $rate_per_km ) / 5 ) * 5;
 
-        $this->add_rate( array(
+        if ( ! $this->add_tax_inclusive_rate( array(
             'id'        => $this->id . '_bulk_delivery',
             'label'     => $label,
             'cost'      => $cost,
@@ -1108,7 +1115,10 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'Distance'          => $this->format_bulk_delivery_distance_meta( $distance_km, $priced_distance_km ),
                 'Rate'              => $is_free ? __( 'Free delivery threshold met', 'erpnext-shipping' ) : sprintf( 'R%s/km', wc_format_decimal( $rate_per_km, 2 ) ),
             ),
-        ) );
+        ) ) ) {
+            $this->log( 'Own vehicle delivery skipped: invalid VAT-inclusive tax split.' );
+            return false;
+        }
 
         $this->log( 'Own vehicle delivery added: ' . round( $priced_distance_km, 1 ) . 'km, cost R' . $cost . ( $is_free ? ' (free threshold met)' : '' ) );
         return true;
@@ -1633,6 +1643,41 @@ class ES_Shipping_Method extends WC_Shipping_Method {
         return ceil( $cost / 5 ) * 5;
     }
 
+	/**
+	 * Add a rate whose configured/calculated amount is the customer's final,
+	 * VAT-inclusive charge.
+	 *
+	 * WC_Shipping_Method normally treats `cost` as tax-exclusive. Carrier quotes,
+	 * fallback amounts and own-vehicle prices in this plugin are merchant-facing
+	 * gross amounts, so split them with WooCommerce's active shipping tax rates
+	 * and provide the explicit net + tax map. This keeps the displayed amount
+	 * unchanged and gives order/ERP sync distinct shipping_total/shipping_tax.
+	 *
+	 * TCG Locker deliberately does not use this helper: its pricing contract
+	 * already supplies an ex-VAT Woo cost and lets Woo calculate the one tax.
+	 */
+    private function add_tax_inclusive_rate( array $args ) {
+        $gross = $args['cost'] ?? null;
+        $taxes = array();
+
+        if ( is_numeric( $gross ) && (float) $gross > 0 && $this->is_taxable() ) {
+            $rates = WC_Tax::get_shipping_tax_rates();
+            if ( ! empty( $rates ) ) {
+                $taxes = WC_Tax::calc_inclusive_tax( (float) $gross, $rates );
+            }
+        }
+
+        $split = ES_Shipping_Tax::split_inclusive( $gross, $taxes );
+        if ( empty( $split['ok'] ) ) {
+            return false;
+        }
+
+        $args['cost']  = $split['net'];
+        $args['taxes'] = $split['taxes'];
+        $this->add_rate( $args );
+        return true;
+    }
+
     /**
      * Add the flat rate fallback.
      */
@@ -1641,7 +1686,7 @@ class ES_Shipping_Method extends WC_Shipping_Method {
         if ( $fallback <= 0 ) {
             return;
         }
-        $this->add_rate( array(
+        $this->add_tax_inclusive_rate( array(
             'id'    => $this->id . '_fallback',
             'label' => __( 'Flat Rate Shipping', 'erpnext-shipping' ),
             'cost'  => $fallback,

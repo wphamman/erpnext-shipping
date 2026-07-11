@@ -2,14 +2,14 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.14.0
+ * Version: 1.14.1
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Requires at least: 6.0
  * Tested up to: 7.0
  * Requires PHP: 8.0
  * WC requires at least: 8.0
- * WC tested up to: 10.8
+ * WC tested up to: 10.9
  * Text Domain: erpnext-shipping
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.14.0' );
+define( 'ES_SHIPPING_VERSION', '1.14.1' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // TCG Locker (PUDO) — sandbox API base default. Origin is derived by stripping
@@ -27,6 +27,7 @@ define( 'ES_TCG_LOCKER_SANDBOX_BASE', 'https://sandbox.api-pudo.co.za/api/v1' );
 // Pure manual door-carrier booking contracts and injectable provider clients.
 require_once ES_SHIPPING_PATH . 'includes/class-es-carrier-booking.php';
 require_once ES_SHIPPING_PATH . 'includes/class-es-door-booking-client.php';
+require_once ES_SHIPPING_PATH . 'includes/class-es-shipping-tax.php';
 
 // Isolated TCG Locker API client. No side effects at load; required early so
 // both the admin settings screen and the shipping-method flow can use it.

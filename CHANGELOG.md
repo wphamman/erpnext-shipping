@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-07-11
+
+### Fixed
+- **Door and own-vehicle shipping prices no longer receive VAT twice.** Courier Guy and MDS return VAT-inclusive quotes, and the plugin's fallback and own-vehicle settings are customer-facing gross amounts. These rates are now split through WooCommerce's active shipping tax rates into net shipping plus explicit tax, preserving the configured/displayed total while keeping `shipping_total` and `shipping_tax` distinct for ERPNext sync. TCG Locker remains on its existing VAT-reconciled path.
+
 ## [1.14.0] - 2026-07-11
 
 ### Added
