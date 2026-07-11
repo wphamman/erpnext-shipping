@@ -118,10 +118,17 @@ class ES_Fulfillment_Cron {
                 }
             };
 
+            // Both legacy queries EXCLUDE the already-selected ids (the locker
+            // reserve, plus anything the first legacy query added) so their `limit`
+            // counts only NEW orders. Without this, a completed order that is ALSO a
+            // reserved locker order would be fetched, discarded by the de-dup, and
+            // leave its slot unfilled — letting an overlapping-locker backlog starve
+            // conventional orders.
             $remaining = self::BATCH_SIZE - count( $orders );
             if ( $remaining > 0 ) {
                 $add_legacy( wc_get_orders( array(
                     'status'     => array( 'completed', 'partially-shipped' ),
+                    'exclude'    => array_map( 'intval', array_keys( $have ) ),
                     'meta_query' => array(
                         array( 'key' => '_wc_shipment_tracking_items', 'compare' => 'EXISTS' ),
                         array( 'key' => '_es_last_polled', 'compare' => 'NOT EXISTS' ),
@@ -133,6 +140,7 @@ class ES_Fulfillment_Cron {
             if ( $remaining > 0 ) {
                 $add_legacy( wc_get_orders( array(
                     'status'     => array( 'completed', 'partially-shipped' ),
+                    'exclude'    => array_map( 'intval', array_keys( $have ) ),
                     'meta_query' => array(
                         array( 'key' => '_wc_shipment_tracking_items', 'compare' => 'EXISTS' ),
                         array( 'key' => '_es_last_polled', 'compare' => 'EXISTS' ),
