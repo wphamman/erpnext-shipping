@@ -153,6 +153,27 @@ es_test( 'detect_drift: service gone, box changed, revision changed, price moved
 	es_eq( 'price_changed', $d4['reason'], 'price_changed' );
 } );
 
+es_test( 'detect_drift: revision must match EXACTLY (missing on either side is drift)', function () use ( $SNAP ) {
+	// No persisted revision but a fresh revision present → drift (the fail-open case).
+	$no_prev = array(
+		ES_TCG_Locker_Rate::M_SERVICE_CODE  => 'L2LL - ECO',
+		ES_TCG_Locker_Rate::M_BOX_CODE      => '13',
+		ES_TCG_Locker_Rate::M_PROVIDER_RATE => '92',
+		ES_TCG_Locker_Rate::M_REVISION_ID   => '',
+	);
+	$d1 = ES_TCG_Locker_Booking::detect_drift( $no_prev, array( array( 'service_code' => 'L2LL - ECO', 'box_code' => '13', 'rate' => 92.0, 'rate_revision_id' => 'rev_l_2' ) ) );
+	es_ok( $d1['drift'], 'no persisted revision vs a fresh revision → drift' );
+	es_eq( 'revision_changed', $d1['reason'], 'reason revision_changed' );
+
+	// Persisted revision but fresh dropped it → drift.
+	$d2 = ES_TCG_Locker_Booking::detect_drift( $SNAP, array( array( 'service_code' => 'L2LL - ECO', 'box_code' => '13', 'rate' => 92.0, 'rate_revision_id' => '' ) ) );
+	es_ok( $d2['drift'], 'persisted revision vs a fresh blank → drift' );
+
+	// Both sides genuinely have no revision (a provider that never issues them) → OK.
+	$d3 = ES_TCG_Locker_Booking::detect_drift( $no_prev, array( array( 'service_code' => 'L2LL - ECO', 'box_code' => '13', 'rate' => 92.0, 'rate_revision_id' => '' ) ) );
+	es_ok( ! $d3['drift'], 'both revisions absent → no drift' );
+} );
+
 es_test( 'detect_drift: sub-cent price wobble is tolerated', function () use ( $SNAP ) {
 	$d = ES_TCG_Locker_Booking::detect_drift( $SNAP, array( array( 'service_code' => 'L2LL - ECO', 'box_code' => '13', 'rate' => 92.009, 'rate_revision_id' => 'rev_l_1' ) ) );
 	es_ok( ! $d['drift'], 'price within PRICE_EPSILON → no drift' );

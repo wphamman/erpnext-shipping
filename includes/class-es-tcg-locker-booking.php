@@ -188,10 +188,14 @@ class ES_TCG_Locker_Booking {
 			return array( 'drift' => true, 'reason' => 'no_fresh_price' );
 		}
 
-		// Revision id, when known on both sides, must match.
+		// Revision id must match EXACTLY (contract: exact service/box/revision/price).
+		// A missing persisted or fresh revision is a mismatch unless BOTH are absent
+		// (a provider that never issues revision ids). Comparing only when both are
+		// non-empty would fail open — e.g. no persisted revision vs a fresh 'rev_l_2'
+		// would slip through — so compare the raw strings directly.
 		$p_rev = (string) ( $persisted[ ES_TCG_Locker_Rate::M_REVISION_ID ] ?? '' );
 		$f_rev = (string) ( $match['rate_revision_id'] ?? '' );
-		if ( '' !== $p_rev && '' !== $f_rev && $p_rev !== $f_rev ) {
+		if ( $p_rev !== $f_rev ) {
 			return array( 'drift' => true, 'reason' => 'revision_changed' );
 		}
 

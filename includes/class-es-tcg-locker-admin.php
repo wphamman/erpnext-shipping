@@ -64,6 +64,21 @@ class ES_TCG_Locker_Admin {
 		return current_user_can( self::book_capability() );
 	}
 
+	/**
+	 * Capability to print/download labels. Separate from booking: printing a label
+	 * does not spend money, so warehouse staff may print even where they should not
+	 * book. Defaults to the fulfilment check; filterable to a specific capability.
+	 */
+	private static function current_user_can_labels() {
+		$cap = apply_filters( 'es_tcg_locker_label_capability', '' );
+		if ( '' !== $cap ) {
+			return current_user_can( $cap );
+		}
+		return class_exists( 'ES_Warehouse_Role' )
+			? ES_Warehouse_Role::current_user_can_fulfill()
+			: current_user_can( 'manage_woocommerce' );
+	}
+
 	// ─────────────────────────── Order reads ───────────────────────────
 
 	/**
@@ -170,7 +185,11 @@ class ES_TCG_Locker_Admin {
 		$tracking_ref = (string) $order->get_meta( ES_TCG_Locker_Booking::M_TRACKING_REF, true );
 		$last_error   = (string) $order->get_meta( ES_TCG_Locker_Booking::M_LAST_ERROR, true );
 		$guard        = ES_TCG_Locker_Booking::guard( $shipment_id, $status );
-		$needs_review = ES_TCG_Locker_Booking::is_blocking_status( $status ) && '' === $shipment_id;
+		// Offer the recover/clear affordance when a prior attempt is stuck (blocking
+		// status) OR a lock was stranded by a hard crash (stale lock, even if the
+		// status never reached 'booking').
+		$stale_lock   = self::lock_state( $order_id )['stale'];
+		$needs_review = '' === $shipment_id && ( ES_TCG_Locker_Booking::is_blocking_status( $status ) || $stale_lock );
 
 		$g = function ( $k ) use ( $snap ) {
 			return isset( $snap[ $k ] ) ? $snap[ $k ] : '';
@@ -381,10 +400,13 @@ class ES_TCG_Locker_Admin {
 				'' !== $outcome['tracking_ref'] ? $outcome['tracking_ref'] : '—'
 			), 0 );
 			// Append one AST-compatible tracking item (idempotent) so the Phase-5
-			// poller has a target. save_tracking_item() persists the order (incl. the
-			// booking meta set above); if there is no tracking ref, save explicitly.
-			if ( '' !== $outcome['tracking_ref'] && class_exists( 'ES_Fulfillment_Tracking' ) ) {
-				self::append_tracking_once( $order, $outcome['tracking_ref'] );
+			// poller always has a target — fall back to the shipment id when the
+			// provider returned no tracking reference, so a booked shipment is never
+			// left unpollable. save_tracking_item() persists the order (incl. the
+			// booking meta set above).
+			$track_id = '' !== $outcome['tracking_ref'] ? $outcome['tracking_ref'] : $outcome['shipment_id'];
+			if ( '' !== $track_id && class_exists( 'ES_Fulfillment_Tracking' ) ) {
+				self::append_tracking_once( $order, $track_id );
 			} else {
 				$order->save();
 			}
@@ -411,24 +433,34 @@ class ES_TCG_Locker_Admin {
 	}
 
 	/**
-	 * Operator-confirmed reconciliation: clear a stuck 'booking' or 'ambiguous'
-	 * state (only) so a re-book is permitted, and force-release any stale lock.
-	 * Never clears a real shipment id. Always exits via wp_send_json_*.
+	 * Operator-confirmed reconciliation: clear a stuck 'booking'/'ambiguous' state
+	 * (or a crash-stranded lock) so a re-book is permitted. Never clears a real
+	 * shipment id. Always exits via wp_send_json_*.
+	 *
+	 * CRUCIALLY it refuses while the lock is still FRESH — a fresh lock means a
+	 * booking request is genuinely in flight right now (LOCK_TTL comfortably exceeds
+	 * a booking request's wall time), so clearing would let a second booking run
+	 * against a live provider call. It only proceeds when the lock is absent or stale
+	 * (holder presumed dead), and only then force-releases it.
 	 */
 	private static function handle_clear( $order ) {
 		$shipment_id = (string) $order->get_meta( ES_TCG_Locker_Booking::M_SHIPMENT_ID, true );
 		if ( '' !== $shipment_id ) {
 			wp_send_json_error( array( 'message' => __( 'This order already has a booked shipment; nothing to clear.', 'erpnext-shipping' ) ) );
 		}
+		$lock = self::lock_state( $order->get_id() );
+		if ( $lock['present'] && ! $lock['stale'] ) {
+			wp_send_json_error( array( 'message' => __( 'A booking is currently in progress for this order. Wait a moment, then reload before clearing.', 'erpnext-shipping' ) ) );
+		}
 		$status = (string) $order->get_meta( ES_TCG_Locker_Booking::M_BOOKING_STATUS, true );
-		if ( ! ES_TCG_Locker_Booking::is_blocking_status( $status ) ) {
+		if ( ! ES_TCG_Locker_Booking::is_blocking_status( $status ) && ! $lock['stale'] ) {
 			wp_send_json_error( array( 'message' => __( 'Nothing to clear.', 'erpnext-shipping' ) ) );
 		}
 		$order->update_meta_data( ES_TCG_Locker_Booking::M_BOOKING_STATUS, ES_TCG_Locker_Booking::STATE_NONE );
 		$order->update_meta_data( ES_TCG_Locker_Booking::M_LAST_ERROR, '' );
 		$order->add_order_note( __( 'TCG Locker: booking state cleared after manual portal check — re-book allowed.', 'erpnext-shipping' ), 0 );
 		$order->save();
-		self::force_release_lock( $order->get_id() );
+		self::force_release_lock( $order->get_id() ); // Safe: lock is absent or stale (verified above).
 		wp_send_json_success( array( 'message' => __( 'Cleared. You can attempt booking again.', 'erpnext-shipping' ) ) );
 	}
 
@@ -448,8 +480,12 @@ class ES_TCG_Locker_Admin {
 		if ( ! self::dispatch_origin_enabled( $snap[ ES_TCG_Locker_Rate::M_DISPATCH_LOC ] ?? '' ) ) {
 			return 'origin_disabled';
 		}
-		$opts = function_exists( 'es_tcg_locker_settings' ) ? es_tcg_locker_settings() : array();
-		$req  = ES_TCG_Locker_Packer::compute_requirements( self::order_packer_lines( $order, $opts ) );
+		$opts  = function_exists( 'es_tcg_locker_settings' ) ? es_tcg_locker_settings() : array();
+		$lines = self::order_packer_lines( $order, $opts );
+		if ( null === $lines ) {
+			return 'product_missing';
+		}
+		$req = ES_TCG_Locker_Packer::compute_requirements( $lines );
 		if ( empty( $req['ok'] ) ) {
 			return 'not_packable';
 		}
@@ -464,6 +500,7 @@ class ES_TCG_Locker_Admin {
 			'not_paid'        => __( 'This order is not paid yet — it cannot be booked.', 'erpnext-shipping' ),
 			'locker_gone'     => __( 'The chosen locker is no longer available. Ask the customer to pick another.', 'erpnext-shipping' ),
 			'origin_disabled' => __( 'The dispatch warehouse is no longer enabled for TCG Locker.', 'erpnext-shipping' ),
+			'product_missing' => __( 'A product on this order no longer exists, so its size/weight cannot be verified. Fix the order before booking.', 'erpnext-shipping' ),
 			'not_packable'    => __( 'The current order contents cannot be packed into a locker box.', 'erpnext-shipping' ),
 			'exceeds_box'     => __( 'The order has changed since checkout and no longer fits the quoted box. Re-quote it.', 'erpnext-shipping' ),
 		);
@@ -484,7 +521,12 @@ class ES_TCG_Locker_Admin {
 		return false;
 	}
 
-	/** Build packer lines from the CURRENT order items (mirrors the checkout builder). */
+	/**
+	 * Build packer lines from the CURRENT order items (mirrors the checkout builder).
+	 * Returns null if ANY line's product can no longer be resolved (deleted/trashed
+	 * after checkout): its weight and dimensions would silently vanish from the fit
+	 * check, letting the remaining lines book an undersized box. Fail closed instead.
+	 */
 	private static function order_packer_lines( $order, $opts ) {
 		$excluded_raw = trim( (string) ( $opts['tcg_locker_excluded_shipping_classes'] ?? '' ) );
 		$excluded     = '' === $excluded_raw ? array() : array_map( 'trim', explode( ',', $excluded_raw ) );
@@ -493,7 +535,7 @@ class ES_TCG_Locker_Admin {
 		foreach ( $order->get_items() as $item ) {
 			$product = is_callable( array( $item, 'get_product' ) ) ? $item->get_product() : null;
 			if ( ! $product ) {
-				continue;
+				return null; // Unresolvable product line → cannot certify packing.
 			}
 			$own_ineligible = ( 'yes' === $product->get_meta( '_es_locker_ineligible' ) );
 			$parent_ineligible = false;
@@ -563,7 +605,7 @@ class ES_TCG_Locker_Admin {
 		if ( ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ?? '' ) ), 'es_tcg_locker_label_' . $order_id ) ) {
 			wp_die( esc_html__( 'Security check failed.', 'erpnext-shipping' ), '', array( 'response' => 403 ) );
 		}
-		if ( ! self::current_user_can_book() ) {
+		if ( ! self::current_user_can_labels() ) {
 			wp_die( esc_html__( 'Permission denied.', 'erpnext-shipping' ), '', array( 'response' => 403 ) );
 		}
 		if ( ! in_array( $kind, array( 'waybill', 'sticker' ), true ) ) {
@@ -643,26 +685,37 @@ class ES_TCG_Locker_Admin {
 
 	/**
 	 * Acquire the per-order booking lock. add_option() performs an atomic INSERT
-	 * against the UNIQUE option_name index, so exactly one concurrent caller wins —
-	 * there is no read-then-update race. The value is `token|timestamp`.
-	 *
-	 * A lock left behind by a crashed request (whose shutdown release did not run)
-	 * is broken ONLY when demonstrably stale (> LOCK_TTL): the stale row is deleted
-	 * and re-INSERTed, and add_option again lets exactly ONE racer re-acquire.
+	 * against the UNIQUE option_name index, so exactly ONE concurrent caller wins —
+	 * a held lock always loses. There is deliberately NO automatic stale takeover
+	 * here: a takeover would need a delete-then-reinsert that two racers could both
+	 * win, admitting two owners. So acquire is pure and provably single-owner; a
+	 * lock stranded by a hard crash (whose shutdown release did not run) is recovered
+	 * ONLY through the staleness-guarded operator clear path (handle_clear()), which
+	 * refuses while the lock is still fresh (a live holder). The value is
+	 * `token|timestamp`; the timestamp lets clear tell a dead holder from a live one.
 	 */
 	private static function acquire_lock( $order_id, $token ) {
-		$key = self::LOCK_PREFIX . (int) $order_id;
-		$val = $token . '|' . time();
-		if ( add_option( $key, $val, '', 'no' ) ) {
-			return true;
+		return (bool) add_option( self::LOCK_PREFIX . (int) $order_id, $token . '|' . time(), '', 'no' );
+	}
+
+	/**
+	 * Read the current lock state: whether one is present, its acquire timestamp,
+	 * and whether it is stale (older than LOCK_TTL → its holder is presumed dead).
+	 *
+	 * @return array{present:bool, ts:int, stale:bool}
+	 */
+	private static function lock_state( $order_id ) {
+		$raw = (string) get_option( self::LOCK_PREFIX . (int) $order_id, '' );
+		if ( '' === $raw ) {
+			return array( 'present' => false, 'ts' => 0, 'stale' => false );
 		}
-		$parts   = explode( '|', (string) get_option( $key, '' ) );
-		$held_ts = (int) ( $parts[1] ?? 0 );
-		if ( $held_ts > 0 && ( time() - $held_ts ) > self::LOCK_TTL ) {
-			delete_option( $key );
-			return (bool) add_option( $key, $val, '', 'no' );
-		}
-		return false;
+		$parts = explode( '|', $raw );
+		$ts    = (int) ( $parts[1] ?? 0 );
+		return array(
+			'present' => true,
+			'ts'      => $ts,
+			'stale'   => ( $ts > 0 && ( time() - $ts ) > self::LOCK_TTL ),
+		);
 	}
 
 	/**
@@ -678,7 +731,11 @@ class ES_TCG_Locker_Admin {
 		}
 	}
 
-	/** Unconditional release — used only by the operator clear/reconcile path. */
+	/**
+	 * Unconditional release — used only by the operator clear/reconcile path, and
+	 * only AFTER handle_clear() has confirmed the lock is stale/absent (never while
+	 * a live holder still owns it).
+	 */
 	private static function force_release_lock( $order_id ) {
 		delete_option( self::LOCK_PREFIX . (int) $order_id );
 	}
