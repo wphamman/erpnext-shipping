@@ -2,7 +2,12 @@
 
 **Feature branch:** `feature/pudo-locker` (worktree `.worktrees/pudo-locker`)
 **Base:** `feature/fulfillment-module` @ `e2a6298` (v1.12.14)
-**Status:** Phase 0 — documentation only. **No PHP is implemented in this phase.**
+**Status:** Phase 0 — documentation only. **No PHP is implemented by this phase's own work.**
+
+> **Base-branch note.** During Phase 0 the branch owner (wphamman) landed commit `44d87bf`
+> *fix(security): keep API credentials write-only* on this branch — a PHP change to the
+> existing credential settings, **not** authored by this phase's work. Phase 0's own commits
+> remain documentation-only. §11.1 is written against this new ground truth.
 
 ---
 
@@ -614,14 +619,20 @@ Booking is a **manual, admin-only, irreversible, potentially chargeable** action
 The API token must never appear in frontend HTML/JS, logs, order notes, REST/AJAX responses,
 exception messages, or downloadable label URLs.
 
-### 11.1 Token storage (deviation from existing pattern — flagged)
+### 11.1 Token storage (follows the now-established write-only pattern)
 
-The existing password rows render the stored secret straight into the input `value`
-attribute (`ES_Admin_Page::render_password_row()`, `class-es-admin-page.php:907–911`), i.e.
-current tokens are present in page source, and the settings whitelist (L160) has no
-preserve-on-blank. **TCG Locker will not copy this.** Its token field renders a masked
-placeholder (never the stored value), and an empty submit **preserves** the existing token
-rather than clearing it. (Retrofitting the existing rows is out of scope for this feature.)
+As of `44d87bf` (*fix(security): keep API credentials write-only*, on this branch) the
+existing password rows are **already write-only**: `render_password_row()` renders `value=""`
+with an `autocomplete="new-password"` field and a "Configured — leave blank to keep"
+placeholder (never the stored secret), and the settings save handler preserves the stored
+value on a blank submit (credential fields split out of the plain-text whitelist). **TCG
+Locker follows this established pattern**, not a bespoke one: `tcg_locker_api_token` is
+rendered via the same `render_password_row()` (never emitted into page source) and added to
+the `$credential_fields` preserve-on-blank list, so an empty submit keeps the existing token.
+
+> This supersedes the earlier Phase-0 note that framed write-only tokens as a *deviation* and
+> the retrofit as out-of-scope — the retrofit has since landed on the branch (see the
+> "Base-branch note" in §0), so TCG Locker simply conforms.
 
 ### 11.2 Label proxy
 
