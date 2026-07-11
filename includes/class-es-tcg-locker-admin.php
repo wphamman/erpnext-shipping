@@ -307,10 +307,17 @@ class ES_TCG_Locker_Admin {
 			// handle_clear() always exits via wp_send_json_*.
 		}
 
+		// ONE settings snapshot drives both the lock lease AND the booking client, so
+		// they cannot disagree, and a concurrent settings change mid-booking cannot
+		// retroactively shrink this request's lease.
+		$opts    = function_exists( 'es_tcg_locker_settings' ) ? es_tcg_locker_settings() : array();
+		$timeout = (int) ( $opts['tcg_locker_rate_timeout'] ?? 0 );
+
 		// Atomic, ownership-tokened mutex — a second concurrent request cannot enter
-		// the booking body.
+		// the booking body. The lock stores an ABSOLUTE expiry computed now from this
+		// snapshot, so staleness is judged against an immutable lease (see acquire_lock).
 		$token = self::mint_token();
-		if ( ! self::acquire_lock( $order_id, $token ) ) {
+		if ( ! self::acquire_lock( $order_id, $token, ES_TCG_Locker_Booking::lock_stale_threshold( $timeout ) ) ) {
 			wp_send_json_error( array( 'message' => __( 'A booking is already in progress for this order.', 'erpnext-shipping' ) ) );
 		}
 		// Every exit below is a wp_send_json_*/wp_die → exit(), which bypasses a
@@ -336,7 +343,9 @@ class ES_TCG_Locker_Admin {
 			wp_send_json_error( array( 'message' => __( 'This order has no TCG Locker quote to book from.', 'erpnext-shipping' ) ) );
 		}
 
-		$client = function_exists( 'es_tcg_locker_client' ) ? es_tcg_locker_client() : null;
+		// Same snapshot as the lock lease — the client's per-call timeout and the
+		// lease are guaranteed consistent.
+		$client = function_exists( 'es_tcg_locker_client' ) ? es_tcg_locker_client( $opts ) : null;
 		if ( ! $client ) {
 			wp_send_json_error( array( 'message' => __( 'TCG Locker is not configured.', 'erpnext-shipping' ) ) );
 		}
@@ -345,7 +354,7 @@ class ES_TCG_Locker_Admin {
 		// dispatch origin still enabled, and the CURRENT order still fits the
 		// persisted box (an order edited heavier/larger after checkout must not book
 		// against a stale snapshot).
-		$bad = self::validate_bookable( $order, $snap, $client );
+		$bad = self::validate_bookable( $order, $snap, $client, $opts );
 		if ( '' !== $bad ) {
 			wp_send_json_error( array( 'message' => self::validation_message( $bad ) ) );
 		}
@@ -436,12 +445,12 @@ class ES_TCG_Locker_Admin {
 	 * (or a crash-stranded lock) so a re-book is permitted. Never clears a real
 	 * shipment id. Always exits via wp_send_json_*.
 	 *
-	 * CRUCIALLY it refuses while the lock is still FRESH — a fresh lock means a
-	 * booking request is genuinely in flight right now (the stale threshold from
-	 * lock_ttl() is an enforced upper bound on the whole booking path at the
-	 * configured timeout, so a live request is never yet "stale"), so clearing would
+	 * CRUCIALLY it refuses while the lock is unexpired — an unexpired lock means a
+	 * booking request is genuinely in flight right now (the lock's stored expiry was
+	 * fixed from the snapshot at acquisition to an enforced upper bound on the whole
+	 * booking path, so a live request's lease has not yet passed), so clearing would
 	 * let a second booking run against a live provider call. It only proceeds when
-	 * the lock is absent or stale (holder presumed dead), and only then releases it.
+	 * the lock is absent or expired (holder presumed dead), and only then releases it.
 	 */
 	private static function handle_clear( $order ) {
 		$shipment_id = (string) $order->get_meta( ES_TCG_Locker_Booking::M_SHIPMENT_ID, true );
@@ -470,7 +479,7 @@ class ES_TCG_Locker_Admin {
 	 * Re-validate an order is bookable RIGHT NOW. Returns '' when OK, else a short
 	 * reason code (see validation_message()).
 	 */
-	private static function validate_bookable( $order, $snap, $client ) {
+	private static function validate_bookable( $order, $snap, $client, $opts ) {
 		if ( ! $order->has_status( wc_get_is_paid_statuses() ) ) {
 			return 'not_paid';
 		}
@@ -480,8 +489,7 @@ class ES_TCG_Locker_Admin {
 		if ( ! self::dispatch_origin_enabled( $snap[ ES_TCG_Locker_Rate::M_DISPATCH_LOC ] ?? '' ) ) {
 			return 'origin_disabled';
 		}
-		$opts  = function_exists( 'es_tcg_locker_settings' ) ? es_tcg_locker_settings() : array();
-		$lines = self::order_packer_lines( $order, $opts );
+		$lines = self::order_packer_lines( $order, (array) $opts );
 		if ( null === $lines ) {
 			return 'product_missing';
 		}
@@ -691,44 +699,41 @@ class ES_TCG_Locker_Admin {
 	 * win, admitting two owners. So acquire is pure and provably single-owner; a
 	 * lock stranded by a hard crash (whose shutdown release did not run) is recovered
 	 * ONLY through the staleness-guarded operator clear path (handle_clear()), which
-	 * refuses while the lock is still fresh (a live holder). The value is
-	 * `token|timestamp`; the timestamp lets clear tell a dead holder from a live one.
+	 * refuses while the lock has not expired (a live holder).
+	 *
+	 * The value is `token|expiry`, where expiry is an ABSOLUTE deadline fixed FROM
+	 * THE SNAPSHOT AT ACQUISITION. Storing the deadline (not the acquire time) means
+	 * staleness is judged against an immutable lease — a later settings change that
+	 * lowers the API timeout cannot retroactively shrink a live request's lease and
+	 * let the operator clear delete its lock.
+	 *
+	 * @param int $lease_seconds Lease duration for this request (from the snapshot).
 	 */
-	private static function acquire_lock( $order_id, $token ) {
-		return (bool) add_option( self::LOCK_PREFIX . (int) $order_id, $token . '|' . time(), '', 'no' );
+	private static function acquire_lock( $order_id, $token, $lease_seconds ) {
+		$expiry = time() + max( 1, (int) $lease_seconds );
+		return (bool) add_option( self::LOCK_PREFIX . (int) $order_id, $token . '|' . $expiry, '', 'no' );
 	}
 
 	/**
-	 * Read the current lock state: whether one is present, its acquire timestamp,
-	 * and whether it is stale (older than lock_ttl() → its holder is presumed dead
-	 * because no live booking request can run that long).
+	 * Read the current lock state from the IMMUTABLE stored lease: whether a lock is
+	 * present and whether its stored expiry has passed (holder presumed dead). No
+	 * recomputation from current settings — the lease is whatever was fixed at
+	 * acquisition.
 	 *
-	 * @return array{present:bool, ts:int, stale:bool}
+	 * @return array{present:bool, expiry:int, stale:bool}
 	 */
 	private static function lock_state( $order_id ) {
 		$raw = (string) get_option( self::LOCK_PREFIX . (int) $order_id, '' );
 		if ( '' === $raw ) {
-			return array( 'present' => false, 'ts' => 0, 'stale' => false );
+			return array( 'present' => false, 'expiry' => 0, 'stale' => false );
 		}
-		$parts = explode( '|', $raw );
-		$ts    = (int) ( $parts[1] ?? 0 );
+		$parts  = explode( '|', $raw );
+		$expiry = (int) ( $parts[1] ?? 0 );
 		return array(
 			'present' => true,
-			'ts'      => $ts,
-			'stale'   => ( $ts > 0 && ( time() - $ts ) > self::lock_ttl() ),
+			'expiry'  => $expiry,
+			'stale'   => ( $expiry > 0 && time() > $expiry ),
 		);
-	}
-
-	/**
-	 * Stale threshold for THIS store's configured API timeout. Reads the timeout the
-	 * booking client actually uses and defers to the pure, unit-tested bound in
-	 * ES_TCG_Locker_Booking::lock_stale_threshold() — derived (not fixed) so raising
-	 * the timeout raises the threshold in lock-step and a live request is never
-	 * mistaken for a dead one.
-	 */
-	private static function lock_ttl() {
-		$opts = function_exists( 'es_tcg_locker_settings' ) ? es_tcg_locker_settings() : array();
-		return ES_TCG_Locker_Booking::lock_stale_threshold( (int) ( $opts['tcg_locker_rate_timeout'] ?? 0 ) );
 	}
 
 	/**
