@@ -94,8 +94,22 @@ classic-checkout compatibility; current mobile + desktop checkout behaviour.
 | Production origin | `https://api-tcg.co.za` **(unproven)** | Observed on `customer.tcglocker.co.za` frontend only. **Do not treat as proven.** Verify with TCG or an authorised read-only `GET /api/v1/lockers-data` before any production work. |
 | Production API base | `https://api-tcg.co.za/api/v1` **(unproven)** | Same caveat. |
 
-**Origin and API base are separate settings.** Label endpoints (`/generate/...`) sit
-**outside** `/api/v1`, so the client composes them from the *origin*, not the API base.
+**One setting, deterministic derivation (no contradiction).** There is a **single** stored
+setting, `tcg_locker_api_url`, holding the **API base** (e.g.
+`https://sandbox.api-pudo.co.za/api/v1`). It is validated on save to contain a `/api/v1`
+segment. The **origin** is derived deterministically from it by stripping the trailing
+`/api/v1[/]` (equivalently `scheme://host[:port]`):
+
+```
+api_base = rtrim(tcg_locker_api_url, '/')                       # …/api/v1
+origin   = preg_replace('#/api/v1/?$#', '', api_base)           # scheme://host
+```
+
+- `/api/v1/*` endpoints (E1–E10) → composed from `api_base`.
+- `/generate/*` label endpoints (E11–E12) sit **outside** `/api/v1` → composed from the
+  derived `origin`.
+
+There is no second "origin" setting to fall out of sync; §6.1 stores only `tcg_locker_api_url`.
 
 ### 2.2 Authentication
 
@@ -154,18 +168,49 @@ Request (current L2L contract — collection is `type: locker`, not a terminal):
   result proves it is accepted and required — the L2L contract selects capacity via the
   service-level code, not parcel dimensions.
 
-Response (per-destination service levels; **only** the levels that destination/account
-returns). Fields the client reads and persists per selected service:
+Response shape — established from the published collection's L2L example (it mirrors the
+existing ShipLogic door-rate shape this plugin already parses in
+`ES_Carrier_ShipLogic::get_rates()`, `$r['service_level']['code']` + `$r['rate']`). The
+response is `{ "rates": [ { … } ] }`; **only** the service levels that destination/account
+returns are present. Per rate item:
 
-| Field | Meaning |
+```json
+{
+  "rates": [
+    {
+      "service_level": {
+        "code": "L2LM - ECO",
+        "name": "...",
+        "box_type": "M",
+        "box_type_name": "...",
+        "dimensions": { "length": 60, "width": 41, "height": 19, "weight": 10 }
+      },
+      "rate": 0.00,
+      "rate_excluding_vat": 0.00,
+      "rate_revision_id": "..."
+    }
+  ]
+}
+```
+
+Fields the client reads and persists per selected service:
+
+| JSON path | Meaning |
 |---|---|
-| `service_level_code` | e.g. `L2LM - ECO`. Persisted verbatim. |
-| `service_level_name` **(to confirm)** | Human name. |
-| box type/name **(to confirm)** | Size class (XS…XL). |
-| box dimensions + max weight **(to confirm)** | For packer fit-check against the returned box. |
-| `rate` | Customer-facing total **inclusive of VAT**. |
-| `rate_excluding_vat` | Net (ex-VAT). |
-| `rate_revision_id` **(to confirm)** | Quote fingerprint; persisted, re-checked at booking. |
+| `rates[].service_level.code` | e.g. `L2LM - ECO`. Persisted verbatim → `_es_tcg_locker_service_code`. |
+| `rates[].service_level.name` | Human name → `_es_tcg_locker_service_name`. |
+| `rates[].service_level.box_type` | Size class (XS…XL) → `_es_tcg_locker_box_code`. |
+| `rates[].service_level.box_type_name` | Size display name → `_es_tcg_locker_box_name`. |
+| `rates[].service_level.dimensions` | Box dims + max weight; used for the packer fit-check against the **returned** box → `_es_tcg_locker_box_dims` / `_es_tcg_locker_box_max_weight`. |
+| `rates[].rate` | Customer-facing total **inclusive of VAT** (top-level on the rate item, **not** nested). |
+| `rates[].rate_excluding_vat` | Net (ex-VAT), top-level on the rate item. |
+| `rates[].rate_revision_id` | Quote fingerprint, top-level on the rate item; persisted, re-checked at booking. |
+
+**(to confirm) in Phase 1** against a sandbox fixture: the exact key names *inside*
+`service_level.dimensions` (length/width/height/weight vs. l/w/h/max_weight) and
+`box_type_name`. The nesting structure above (service_level object; `rate` /
+`rate_excluding_vat` / `rate_revision_id` directly on the rate item) is **locked** from the
+published collection, not deferred.
 
 Known service-level codes (examples; not every destination returns every size):
 `L2LXS - ECO`, `L2LS - ECO`, `L2LM - ECO`, `L2LL - ECO`, `L2LXL - ECO`.
@@ -246,19 +291,37 @@ the chosen origin id is persisted on the order/shipping item.
 
 ### 3.4 Checkout selector seam (analogue: pickup selector)
 
-The pickup selector is the exact structural analogue for the locker selector
+The pickup selector supplies the reusable seam conventions
 (`includes/class-es-fulfillment-checkout.php`):
 
-- render under a rate on `woocommerce_after_shipping_rate` (L13);
 - validate on `woocommerce_checkout_process` (L16);
 - persist on `woocommerce_checkout_create_order` (L19, HPOS-safe order object);
 - selection stored in `WC()->session` (`es_pickup_location_id`, L57/L411);
 - nonce `es_checkout_pickup` (L127/L403); AJAX `es_save_checkout_pickup` registered for
   **both** `wp_ajax_` and `wp_ajax_nopriv_` (L450–L451).
 
-TCG Locker mirrors this: session `es_tcg_locker_selection`, nonce `es_checkout_locker`,
-AJAX actions `es_tcg_locker_search` + `es_tcg_locker_select` (priv + nopriv). Selecting or
-changing a locker triggers a WC checkout recalculation (`update_checkout`).
+**Render seam — corrected.** The pickup selector renders on `woocommerce_after_shipping_rate`
+(L13), which only fires **beneath an existing rate**. The locker selector must appear
+**before** any `_locker` rate exists (requirement 3), so it **cannot** use that hook as its
+entry point. The locker selector's primary placement is the classic-checkout review-table
+action **`woocommerce_review_order_after_shipping`**, which fires inside
+`checkout/review-order.php` immediately after the shipping rows on every checkout AJAX
+refresh, regardless of whether any locker rate is present. That control renders either:
+
+- the **"Choose a TCG Locker for cheaper delivery"** prompt (no locker selected yet), or
+- the selected-locker summary + a **"Change locker"** control (locker selected).
+
+**Recalculation.** After the select/clear AJAX persists the choice to session, the plugin JS
+triggers WooCommerce's standard classic-checkout recalculation with
+`jQuery(document.body).trigger('update_checkout')`, which re-runs `calculate_shipping()` and
+re-renders the review table (and thus the selector) via the same hook. Optionally, once a
+`_locker` rate exists, a compact "Change locker" affordance may **also** render beneath it via
+`woocommerce_after_shipping_rate` on the `_locker` rate id — but that is secondary; the
+`woocommerce_review_order_after_shipping` control is the authoritative, always-present entry
+point. (Blocks checkout is out of scope — this uses classic-checkout hooks only.)
+
+TCG Locker session/nonce/AJAX: session `es_tcg_locker_selection`, nonce `es_checkout_locker`,
+AJAX actions `es_tcg_locker_search` + `es_tcg_locker_select` (priv + nopriv).
 
 ### 3.5 Tracking provider registry & polling seam
 
@@ -272,6 +335,27 @@ TCG Locker adds a canonical `tcg-locker` provider (Phase 5) plus a new polling b
 calling the **authenticated** `GET /api/v1/tracking/shipments` (Bearer) — **not** a public
 URL template, and **not** the existing TCG Courier-Guy portal token (which cannot see locker
 shipments). Tracking items are AST-compatible (`_wc_shipment_tracking_items`), appended once.
+
+**Poll-selection gap — corrected (BLOCKER fix).** The existing poll **selection** query
+(`ES_Fulfillment_Cron::poll()`, `class-es-fulfillment-cron.php:85`/`:104`) only fetches
+orders whose status is `completed` or `partially-shipped`. A TCG Locker order is booked while
+still in **`processing`** (paid, not yet shipped); under the current query it would **never**
+be polled, so cron could never observe `customer-deposited`/`in-locker` and perform the first
+forward transition to Shipped. Phase 5 therefore adds a **separate, meta-qualified selection
+query** (unioned with the existing one, same anti-starvation + `BATCH_SIZE` handling):
+
+```
+status     = [ 'processing', 'on-hold', 'completed', 'partially-shipped' ]   # includes pre-shipment
+meta_query = _es_tcg_locker_shipment_id EXISTS
+             AND _es_tcg_locker_booking_status = 'booked'
+```
+
+This selects booked locker orders regardless of pre-shipment WC status, so cron can drive the
+first transition (`processing` → `completed`/"Shipped") once TCG reports an accepted
+handoff/transit state (§12). Selection stops naturally once the order reaches a terminal state
+(`delivered`) — the mapping never regresses and unknown/terminal statuses do not re-trigger
+transitions. The union must de-duplicate (a `completed` locker order matches both queries).
+Non-locker orders are unaffected: the existing query still governs door-carrier tracking.
 
 ### 3.6 Admin action seam (capability + per-order nonce)
 
@@ -319,10 +403,44 @@ dedicated packer is required:
 
 ### 4.2 Dedicated TCG Locker packer (`ES_TCG_Locker_Packer`, Phase 2)
 
-A pure, testable class (no WP/WC runtime dependency in its core method) that, given cart
-lines and a set of candidate boxes (from the live `/rates` response, with a static
-XS…XL catalogue only as test/fallback), returns the smallest valid box **or** a structured
-ineligibility reason. Requirements:
+A pure, testable class (no WP/WC runtime dependency). **The circular dependency between "the
+packer needs boxes" and "boxes come from `/rates`" is resolved by splitting the packer into
+two box-independent-then-box-aware methods**, so nothing calls `/rates` before the packer
+and nothing packs before `/rates`:
+
+1. **`compute_requirements(cart_lines) → requirements | ineligible`** — box-**independent**.
+   Runs **before** `/rates`. Produces the packed-order profile: total weight (float),
+   per-item rotated bounding dimensions, and **cumulative volume** (with the conservative
+   fill factor applied). Returns a structured ineligibility reason immediately for
+   box-independent failures (missing/non-positive weight, missing dimensions, an
+   explicitly locker-ineligible product) — in which case `/rates` is **never** called.
+
+2. **`fits_box(requirements, box) → bool`** and
+   **`select_smallest(requirements, boxes[]) → box | no_box_fits`** — box-**aware**. Run
+   **after** `/rates`, over the boxes extracted from the returned `service_level` objects.
+   Verifies every item physically fits the candidate box (rotated), enforces the box's
+   actual maximum weight and cumulative-volume ceiling, and picks the **smallest fitting**
+   box among those the API actually returned.
+
+**Locked executable order (no circularity):**
+
+```
+locker selected (server-validated)
+  → packer.compute_requirements(cart)            # box-independent; may short-circuit ineligible
+  → [optional] cheap static XS…XL pre-check       # skip /rates for obviously-too-big orders
+  → POST /api/v1/rates (destination terminal)     # returns service levels + their boxes
+  → boxes = extract service_level.{box_type,dimensions} from returned rates
+  → packer.select_smallest(requirements, boxes)   # authoritative fit against RETURNED boxes
+  → chosen service level → _locker rate
+```
+
+The optional static XS…XL pre-check uses the documented catalogue **only** to short-circuit
+grossly ineligible orders (e.g. > 20 kg / longer than XL) before spending a `/rates` call; it
+**never** overrides a live response — actual availability and selection come from the
+**returned** services. If the packer needs M but only XS and XL come back, XL (next larger
+fitting) is chosen; if nothing returned fits → `no_box_fits` → TCG Locker is **not** offered.
+
+Requirements enforced across the two methods:
 
 - preserve float quantities and float weights;
 - reject missing / non-positive weight (never optimistic on missing data);
@@ -336,10 +454,6 @@ ineligibility reason. Requirements:
   `missing_dimensions`, `missing_weight`, `no_box_fits`, `product_excluded`);
 - honour an explicit product-level "ship separately / locker ineligible" override;
 - handle single-SKU ingredient kits with accurate packed dimensions well.
-
-The packer's chosen size intersects with the **returned** `/rates` service levels: if the
-packer needs M but only XS and XL come back, XL (next larger fitting) is chosen; if nothing
-returned fits, TCG Locker is **not** offered.
 
 ---
 
@@ -370,7 +484,7 @@ on the order for later profitability reporting (§10).
 | Key | Default | Notes |
 |---|---|---|
 | `tcg_locker_enabled` | `no` | Master switch. |
-| `tcg_locker_api_url` | sandbox base | Configurable; sandbox by default. Origin derived/separate for `/generate/*`. |
+| `tcg_locker_api_url` | sandbox API base | **The only** URL setting. Holds the API base (`…/api/v1`); sandbox by default; validated to contain `/api/v1`. The origin for `/generate/*` labels is **derived deterministically** from it (strip trailing `/api/v1`), not stored separately (§2.1). |
 | `tcg_locker_api_token` | *(empty)* | **Password field, masked; preserve-on-blank; never rendered back into page source (see §11.1).** |
 | `tcg_locker_rate_label` | `TCG Locker Delivery` | Customer-facing rate label. |
 | `tcg_locker_pricing_mode` | `live` | `live` \| `fixed`. |
@@ -578,11 +692,13 @@ sequenceDiagram
     alt split plan
         SM-->>WC: no locker rate (split excluded)
     else single/chooseable
-        SM->>PK: pack cart → smallest box / ineligible reason
-        PK-->>SM: box + packed weight (or ineligible)
+        SM->>PK: compute_requirements(cart)  [box-independent]
+        PK-->>SM: packed weight + volume + rotated dims (or ineligible → no rate)
         SM->>CL: POST /api/v1/rates (collection type=locker, dest terminal_id)
-        CL-->>SM: returned L2L service levels
-        SM->>SM: discard non-fitting; pick smallest fitting; apply pricing mode
+        CL-->>SM: returned L2L service levels (each with service_level.box_type + dimensions)
+        SM->>PK: select_smallest(requirements, returned boxes)
+        PK-->>SM: smallest fitting service (or no_box_fits → no rate)
+        SM->>SM: apply pricing mode (live/fixed/free)
         SM-->>WC: add_rate id "..._locker" (+ persist-able meta)
     end
     Note over WC: free-shipping filter keeps _locker (erpnext-shipping.php:333)
@@ -735,7 +851,7 @@ cannot be submitted.
 | 2 | `ES_TCG_Locker_Packer` + tests (smallest fitting from **returned** services). No checkout change. |
 | 3 | Classic-checkout destination-locker search/select, L2L quote, `_locker` rate, split exclusion, exact quote persistence, PUDO-specific pricing, graceful failure. No booking. |
 | 4 | HPOS-safe persistence, admin panel, manual idempotent L2L booking (cap+nonce+mutex+drift+ambiguous-timeout), authenticated admin label/sticker proxy. No auto-book. |
-| 5 | Authenticated `tcg-locker` tracking provider + polling, conservative forward-only mapping, diagnostics. No duplicate tracking items. |
+| 5 | Authenticated `tcg-locker` tracking provider + **meta-qualified poll-selection query incl. pre-shipment statuses** (§3.5), conservative forward-only mapping, diagnostics. No duplicate tracking items. |
 | 6 | README/CLAUDE/CHANGELOG, admin setup guidance, sandbox UAT runbook, production activation checklist, rollback, profitability reporting notes, full syntax + test run, release-zip comparison, version bump (likely v1.13.0). No tag/push/deploy. |
 
 ---
