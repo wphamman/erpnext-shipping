@@ -96,13 +96,16 @@ classic-checkout compatibility; current mobile + desktop checkout behaviour.
 
 **One setting, deterministic derivation (no contradiction).** There is a **single** stored
 setting, `tcg_locker_api_url`, holding the **API base** (e.g.
-`https://sandbox.api-pudo.co.za/api/v1`). It is validated on save to contain a `/api/v1`
-segment. The **origin** is derived deterministically from it by stripping the trailing
-`/api/v1[/]` (equivalently `scheme://host[:port]`):
+`https://sandbox.api-pudo.co.za/api/v1`). It is validated on save so that the parsed URL
+**path ends exactly in `/api/v1`** (trailing slash optional) — a URL that merely *contains*
+`/api/v1` elsewhere in the path (e.g. `…/api/v1/foo`) is **rejected**, because origin
+derivation only strips a terminal `/api/v1` and such a URL would otherwise yield a wrong label
+origin. The **origin** is then derived deterministically by stripping that terminal segment:
 
 ```
 api_base = rtrim(tcg_locker_api_url, '/')                       # …/api/v1
-origin   = preg_replace('#/api/v1/?$#', '', api_base)           # scheme://host
+validate:  parse_url(api_base, PHP_URL_PATH) === '/api/v1'      # exact terminal match; else reject
+origin   = preg_replace('#/api/v1$#', '', api_base)             # scheme://host[:port]
 ```
 
 - `/api/v1/*` endpoints (E1–E10) → composed from `api_base`.
@@ -174,43 +177,46 @@ existing ShipLogic door-rate shape this plugin already parses in
 response is `{ "rates": [ { … } ] }`; **only** the service levels that destination/account
 returns are present. Per rate item:
 
+Real published examples (verbatim from the collection) — `box_type` is a **provider
+box-type ID string**, `box_type_name` is the **provider box label** (e.g. `V4-XL`), **not** an
+XS…XL class code:
+
 ```json
 {
   "rates": [
-    {
-      "service_level": {
-        "code": "L2LM - ECO",
-        "name": "...",
-        "box_type": "M",
-        "box_type_name": "...",
-        "dimensions": { "length": 60, "width": 41, "height": 19, "weight": 10 }
-      },
-      "rate": 0.00,
-      "rate_excluding_vat": 0.00,
-      "rate_revision_id": "..."
-    }
+    { "service_level": { "code": "L2LXS - ECO", "name": "...", "box_type": "10", "box_type_name": "V4-XS", "dimensions": { … } }, "rate": 0.00, "rate_excluding_vat": 0.00, "rate_revision_id": "..." },
+    { "service_level": { "code": "L2LL - ECO",  "name": "...", "box_type": "13", "box_type_name": "V4-L",  "dimensions": { … } }, "rate": 0.00, "rate_excluding_vat": 0.00, "rate_revision_id": "..." },
+    { "service_level": { "code": "L2LXL - ECO", "name": "...", "box_type": "14", "box_type_name": "V4-XL", "dimensions": { … } }, "rate": 0.00, "rate_excluding_vat": 0.00, "rate_revision_id": "..." }
   ]
 }
 ```
+
+Observed `box_type` → `box_type_name` from the published examples: `10`→`V4-XS`,
+`13`→`V4-L`, `14`→`V4-XL` (the intermediate `V4-S`/`V4-M` IDs, presumably `11`/`12`, are
+**to confirm** — never assumed). **The packer must not equate `box_type` with a size class.**
+Fit decisions are driven **only** by the numeric `service_level.dimensions` (length/width/
+height/max weight); the human XS…XL label, if needed for display, is **derived** (from
+`box_type_name`, e.g. strip the `V4-` prefix) and stored **separately** — never inferred from
+the `box_type` ID.
 
 Fields the client reads and persists per selected service:
 
 | JSON path | Meaning |
 |---|---|
-| `rates[].service_level.code` | e.g. `L2LM - ECO`. Persisted verbatim → `_es_tcg_locker_service_code`. |
-| `rates[].service_level.name` | Human name → `_es_tcg_locker_service_name`. |
-| `rates[].service_level.box_type` | Size class (XS…XL) → `_es_tcg_locker_box_code`. |
-| `rates[].service_level.box_type_name` | Size display name → `_es_tcg_locker_box_name`. |
-| `rates[].service_level.dimensions` | Box dims + max weight; used for the packer fit-check against the **returned** box → `_es_tcg_locker_box_dims` / `_es_tcg_locker_box_max_weight`. |
+| `rates[].service_level.code` | e.g. `L2LXL - ECO`. Persisted verbatim → `_es_tcg_locker_service_code`. |
+| `rates[].service_level.name` | Human service name → `_es_tcg_locker_service_name`. |
+| `rates[].service_level.box_type` | **Provider box-type ID string** (e.g. `"14"`). Persisted verbatim → `_es_tcg_locker_box_code`. |
+| `rates[].service_level.box_type_name` | Provider box label (e.g. `V4-XL`) → `_es_tcg_locker_box_name`. Human size (`XL`) derived from this and stored in `_es_tcg_locker_box_size`. |
+| `rates[].service_level.dimensions` | Box dims + max weight; the **authoritative** input to the packer fit-check → `_es_tcg_locker_box_dims` / `_es_tcg_locker_box_max_weight`. |
 | `rates[].rate` | Customer-facing total **inclusive of VAT** (top-level on the rate item, **not** nested). |
 | `rates[].rate_excluding_vat` | Net (ex-VAT), top-level on the rate item. |
 | `rates[].rate_revision_id` | Quote fingerprint, top-level on the rate item; persisted, re-checked at booking. |
 
 **(to confirm) in Phase 1** against a sandbox fixture: the exact key names *inside*
-`service_level.dimensions` (length/width/height/weight vs. l/w/h/max_weight) and
-`box_type_name`. The nesting structure above (service_level object; `rate` /
-`rate_excluding_vat` / `rate_revision_id` directly on the rate item) is **locked** from the
-published collection, not deferred.
+`service_level.dimensions` (length/width/height/weight vs. l/w/h/max_weight), and the
+intermediate `V4-S`/`V4-M` box-type IDs. The nesting structure above (service_level object;
+`box_type` as a provider ID string; `rate` / `rate_excluding_vat` / `rate_revision_id`
+directly on the rate item) is **locked** from the published collection, not deferred.
 
 Known service-level codes (examples; not every destination returns every size):
 `L2LXS - ECO`, `L2LS - ECO`, `L2LM - ECO`, `L2LL - ECO`, `L2LXL - ECO`.
@@ -484,7 +490,7 @@ on the order for later profitability reporting (§10).
 | Key | Default | Notes |
 |---|---|---|
 | `tcg_locker_enabled` | `no` | Master switch. |
-| `tcg_locker_api_url` | sandbox API base | **The only** URL setting. Holds the API base (`…/api/v1`); sandbox by default; validated to contain `/api/v1`. The origin for `/generate/*` labels is **derived deterministically** from it (strip trailing `/api/v1`), not stored separately (§2.1). |
+| `tcg_locker_api_url` | sandbox API base | **The only** URL setting. Holds the API base (`…/api/v1`); sandbox by default; validated so the parsed path **ends exactly in `/api/v1`** (§2.1) — a merely-containing URL is rejected. The origin for `/generate/*` labels is **derived deterministically** by stripping that terminal `/api/v1`, not stored separately. |
 | `tcg_locker_api_token` | *(empty)* | **Password field, masked; preserve-on-blank; never rendered back into page source (see §11.1).** |
 | `tcg_locker_rate_label` | `TCG Locker Delivery` | Customer-facing rate label. |
 | `tcg_locker_pricing_mode` | `live` | `live` \| `fixed`. |
@@ -521,7 +527,9 @@ Persisted via the order object CRUD API. Minimum set:
 | `_es_tcg_locker_dispatch_location_id` | ERPNext-selected origin warehouse (persisted even though not sent as a terminal). |
 | `_es_tcg_locker_service_code` | Exact `service_level_code`. |
 | `_es_tcg_locker_service_name` | Service display name. |
-| `_es_tcg_locker_box_code` / `_es_tcg_locker_box_name` | Fitted box. |
+| `_es_tcg_locker_box_code` | Provider box-type **ID** (e.g. `"14"`) — verbatim from `service_level.box_type`. |
+| `_es_tcg_locker_box_name` | Provider box label (e.g. `V4-XL`) — from `service_level.box_type_name`. |
+| `_es_tcg_locker_box_size` | Derived human size class (e.g. `XL`) — from the label, **never** from the box-type ID. |
 | `_es_tcg_locker_box_dims` / `_es_tcg_locker_box_max_weight` | Packed box spec. |
 | `_es_tcg_locker_packed_weight` | Packer's computed packed weight. |
 | `_es_tcg_locker_provider_rate` | Provider `rate` (incl VAT). |
