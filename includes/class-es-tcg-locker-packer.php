@@ -13,8 +13,14 @@
  *   2. fits_box()/select_smallest() — box-AWARE; run AFTER /rates over the
  *      boxes actually returned by the provider.
  *
- * Conservative throughout: missing/insufficient packaging data yields a
- * structured ineligibility reason rather than an optimistic "fits".
+ * SOUNDNESS: fits_box() must never claim a fit that cannot be physically
+ * realised. For more than one physical unit it does NOT rely on aggregate
+ * volume alone (which can pass while items cannot coexist — e.g. two 40³ cubes
+ * in a 60×41×69 box); it runs a conservative constructive 3D placement
+ * (extreme-point best-fit with real coordinates + overlap test, 6 orientations)
+ * and returns true only when every unit is actually placed. The placement
+ * heuristic is incomplete, so it may reject some theoretically-packable orders
+ * — that is the intended conservative bias.
  *
  * @package ERPNext_Shipping
  */
@@ -25,16 +31,24 @@ class ES_TCG_Locker_Packer {
 
 	/**
 	 * Conservative usable fraction of a box's gross volume, applied to the
-	 * CUMULATIVE item volume when there is more than one unit (real irregular
-	 * items never pack to 100%). A single unit whose dimensions already fit the
-	 * box is authoritative and is not penalised by this factor.
+	 * CUMULATIVE item volume when there is more than one unit. This is a cheap
+	 * NECESSARY pre-filter; the constructive placement below is the SUFFICIENT
+	 * check. A single unit whose dimensions already fit the box is authoritative
+	 * and is not penalised by this factor.
 	 */
 	const FILL_FACTOR = 0.80;
 
 	/**
-	 * Static reference catalogue (typical locker classes). For tests and the
-	 * OPTIONAL pre-/rates short-circuit only — a live /rates response is always
-	 * authoritative for actual availability and selection.
+	 * Upper bound on physical units the constructive packer will attempt. Above
+	 * this, a fit cannot be cheaply demonstrated, so the order is rejected
+	 * (conservative). Locker orders (≤20kg, small boxes) never approach this.
+	 */
+	const MAX_PLACEMENT_UNITS = 128;
+
+	/**
+	 * Static reference catalogue (typical locker classes) — for TESTS ONLY. A
+	 * live /rates response is always authoritative for actual availability and
+	 * selection; the static catalogue is never used to gate or select at runtime.
 	 */
 	const STATIC_BOXES = array(
 		'XS' => array( 'length' => 60, 'width' => 17, 'height' => 8,  'max_weight' => 2 ),
@@ -55,7 +69,9 @@ class ES_TCG_Locker_Packer {
 	 *                      'locker_eligible' (bool, default true) ].
 	 * @return array Success:
 	 *   [ 'ok'=>true, 'total_weight'=>float, 'total_volume'=>float,
-	 *     'unit_count'=>float, 'max_dims'=>[a,b,c] (sorted asc) ]
+	 *     'unit_count'=>float, 'physical_units'=>int, 'over_unit_cap'=>bool,
+	 *     'max_dims'=>[a,b,c] (sorted asc),
+	 *     'units'=>[ [a,b,c] (sorted asc), ... ] (empty when over the cap) ]
 	 *   Failure: [ 'ok'=>false, 'reason'=>string ] where reason is one of
 	 *   no_items | product_excluded | missing_quantity | missing_weight |
 	 *   missing_dimensions.
@@ -65,10 +81,13 @@ class ES_TCG_Locker_Packer {
 			return array( 'ok' => false, 'reason' => 'no_items' );
 		}
 
-		$total_weight = 0.0;
-		$total_volume = 0.0;
-		$unit_count   = 0.0;
-		$max_dims     = array( 0.0, 0.0, 0.0 );
+		$total_weight   = 0.0;
+		$total_volume   = 0.0;
+		$unit_count     = 0.0;
+		$physical_units = 0;
+		$max_dims       = array( 0.0, 0.0, 0.0 );
+		$units          = array();
+		$over_cap       = false;
 
 		foreach ( $lines as $line ) {
 			// Explicit per-product opt-out ("ship separately / locker ineligible").
@@ -108,14 +127,34 @@ class ES_TCG_Locker_Packer {
 			$total_weight += $weight * $qty;
 			$total_volume += ( $dims[0] * $dims[1] * $dims[2] ) * $qty;
 			$unit_count   += $qty;
+
+			// Physical units for spatial placement: round fractional quantities
+			// UP (you cannot ship a fraction of a parcel; over-count is conservative).
+			$count           = (int) ceil( $qty - self::EPS );
+			$count           = $count < 1 ? 1 : $count;
+			$physical_units += $count;
+
+			if ( ! $over_cap ) {
+				for ( $i = 0; $i < $count; $i++ ) {
+					$units[] = $dims;
+					if ( count( $units ) > self::MAX_PLACEMENT_UNITS ) {
+						$over_cap = true;
+						$units    = array();
+						break;
+					}
+				}
+			}
 		}
 
 		return array(
-			'ok'           => true,
-			'total_weight' => $total_weight,
-			'total_volume' => $total_volume,
-			'unit_count'   => $unit_count,
-			'max_dims'     => $max_dims,
+			'ok'             => true,
+			'total_weight'   => $total_weight,
+			'total_volume'   => $total_volume,
+			'unit_count'     => $unit_count,
+			'physical_units' => $physical_units,
+			'over_unit_cap'  => $over_cap,
+			'max_dims'       => $max_dims,
+			'units'          => $units,
 		);
 	}
 
@@ -141,7 +180,7 @@ class ES_TCG_Locker_Packer {
 			return false;
 		}
 
-		// Dimensions — every item must physically fit (rotation allowed via sorting).
+		// Box dimensions — must all be present and positive.
 		$bdims = array(
 			( is_array( $box ) && isset( $box['length'] ) && is_numeric( $box['length'] ) ) ? (float) $box['length'] : 0.0,
 			( is_array( $box ) && isset( $box['width'] ) && is_numeric( $box['width'] ) ) ? (float) $box['width'] : 0.0,
@@ -153,6 +192,8 @@ class ES_TCG_Locker_Packer {
 			}
 		}
 		sort( $bdims );
+
+		// Necessary condition: the largest single item must fit (rotation allowed).
 		$mdims = $requirements['max_dims'];
 		for ( $i = 0; $i < 3; $i++ ) {
 			if ( $mdims[ $i ] > $bdims[ $i ] + self::EPS ) {
@@ -160,26 +201,31 @@ class ES_TCG_Locker_Packer {
 			}
 		}
 
-		// Cumulative volume — apply the conservative fill factor only when there
-		// is more than one unit. A single unit that dimensionally fits is
-		// authoritative and not penalised.
-		$box_volume = $bdims[0] * $bdims[1] * $bdims[2];
-		$unit_count = isset( $requirements['unit_count'] ) ? (float) $requirements['unit_count'] : 1.0;
-		if ( $unit_count > 1.0 + self::EPS ) {
-			if ( $requirements['total_volume'] > $box_volume * self::FILL_FACTOR + self::EPS ) {
-				return false;
-			}
-		} elseif ( $requirements['total_volume'] > $box_volume + self::EPS ) {
+		$box_volume     = $bdims[0] * $bdims[1] * $bdims[2];
+		$physical_units = isset( $requirements['physical_units'] ) ? (int) $requirements['physical_units'] : 1;
+
+		// Single physical unit: dimensional fit above already proves placement.
+		if ( $physical_units <= 1 ) {
+			return $requirements['total_volume'] <= $box_volume + self::EPS;
+		}
+
+		// Multi-unit — cheap NECESSARY volume pre-filter (conservative fill factor).
+		if ( $requirements['total_volume'] > $box_volume * self::FILL_FACTOR + self::EPS ) {
 			return false;
 		}
 
-		return true;
+		// Too many units to demonstrate a placement cheaply → conservative reject.
+		if ( ! empty( $requirements['over_unit_cap'] ) || empty( $requirements['units'] ) ) {
+			return false;
+		}
+
+		// SUFFICIENT check: constructively place every unit, or reject.
+		return self::can_place_units( $requirements['units'], $bdims );
 	}
 
 	/**
 	 * Box-aware: choose the smallest fitting box among the RETURNED offers. Runs
-	 * AFTER /rates. The provider's returned services are authoritative; the
-	 * static catalogue is never substituted here.
+	 * AFTER /rates. The provider's returned services are authoritative.
 	 *
 	 * @param array $requirements Output of compute_requirements().
 	 * @param array $offers Array of offers, each with a 'dimensions' box
@@ -218,21 +264,115 @@ class ES_TCG_Locker_Packer {
 		return array( 'ok' => true, 'offer' => $best );
 	}
 
+	// ─────────────────────────── Constructive placement ────────────────────
+
 	/**
-	 * Optional cheap pre-/rates gate: could this order plausibly fit ANY known
-	 * locker box? Uses the static catalogue so an obviously oversized order can
-	 * skip the /rates call. NEVER used to select a box or to override a live
-	 * response.
+	 * Conservative constructive placement (extreme-point best-fit with real
+	 * coordinates). Returns true ONLY when every unit is placed axis-aligned
+	 * inside the box with no overlap. Candidate positions are the box origin
+	 * plus the far corners generated by each placement; each unit is tried at
+	 * the lowest/nearest candidate first, in each of 6 orientations, against a
+	 * true overlap test. Heuristic and incomplete — it errs toward rejection,
+	 * never toward a false fit.
+	 *
+	 * @param array $units Array of [a,b,c] item dimensions.
+	 * @param array $box   Sorted box dimensions [A,B,C].
+	 * @return bool
 	 */
-	public static function plausibly_fits_any( $requirements ) {
-		if ( empty( $requirements['ok'] ) ) {
-			return false;
-		}
-		foreach ( self::STATIC_BOXES as $box ) {
-			if ( self::fits_box( $requirements, $box ) ) {
-				return true;
+	private static function can_place_units( $units, $box ) {
+		// Largest items first — place the constrained pieces before the fillers.
+		usort(
+			$units,
+			function ( $a, $b ) {
+				return ( $b[0] * $b[1] * $b[2] ) <=> ( $a[0] * $a[1] * $a[2] );
+			}
+		);
+
+		$bx     = (float) $box[0];
+		$by     = (float) $box[1];
+		$bz     = (float) $box[2];
+		$placed = array();                        // each: [x,y,z,dx,dy,dz]
+		$points = array( array( 0.0, 0.0, 0.0 ) ); // candidate corner positions
+
+		foreach ( $units as $unit ) {
+			// Fill low/near the origin first (deterministic).
+			usort(
+				$points,
+				function ( $p, $q ) {
+					return array( $p[2], $p[1], $p[0] ) <=> array( $q[2], $q[1], $q[0] );
+				}
+			);
+
+			$done = false;
+			foreach ( $points as $p ) {
+				foreach ( self::orientations( $unit ) as $o ) {
+					if ( self::fits_at( $p, $o, $bx, $by, $bz, $placed ) ) {
+						$placed[] = array( $p[0], $p[1], $p[2], $o[0], $o[1], $o[2] );
+						self::add_point( $points, array( $p[0] + $o[0], $p[1], $p[2] ) );
+						self::add_point( $points, array( $p[0], $p[1] + $o[1], $p[2] ) );
+						self::add_point( $points, array( $p[0], $p[1], $p[2] + $o[2] ) );
+						$done = true;
+						break 2;
+					}
+				}
+			}
+			if ( ! $done ) {
+				return false; // No position/orientation could hold this unit.
 			}
 		}
-		return false;
+
+		return true;
+	}
+
+	/** The 6 axis-aligned orientations of a unit (deduplicated). */
+	private static function orientations( $unit ) {
+		$u    = array( (float) $unit[0], (float) $unit[1], (float) $unit[2] );
+		$all  = array(
+			array( $u[0], $u[1], $u[2] ),
+			array( $u[0], $u[2], $u[1] ),
+			array( $u[1], $u[0], $u[2] ),
+			array( $u[1], $u[2], $u[0] ),
+			array( $u[2], $u[0], $u[1] ),
+			array( $u[2], $u[1], $u[0] ),
+		);
+		$out  = array();
+		$seen = array();
+		foreach ( $all as $o ) {
+			$key = $o[0] . 'x' . $o[1] . 'x' . $o[2];
+			if ( ! isset( $seen[ $key ] ) ) {
+				$seen[ $key ] = true;
+				$out[]        = $o;
+			}
+		}
+		return $out;
+	}
+
+	/** Does an item of size $o placed at corner $p fit in-bounds without overlapping any placed box? */
+	private static function fits_at( $p, $o, $bx, $by, $bz, $placed ) {
+		$x = $p[0];
+		$y = $p[1];
+		$z = $p[2];
+		if ( $x + $o[0] > $bx + self::EPS || $y + $o[1] > $by + self::EPS || $z + $o[2] > $bz + self::EPS ) {
+			return false;
+		}
+		foreach ( $placed as $b ) {
+			$overlap = $x < $b[0] + $b[3] - self::EPS && $x + $o[0] > $b[0] + self::EPS
+				&& $y < $b[1] + $b[4] - self::EPS && $y + $o[1] > $b[1] + self::EPS
+				&& $z < $b[2] + $b[5] - self::EPS && $z + $o[2] > $b[2] + self::EPS;
+			if ( $overlap ) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/** Add a candidate corner point unless an equal one already exists. */
+	private static function add_point( &$points, $np ) {
+		foreach ( $points as $p ) {
+			if ( abs( $p[0] - $np[0] ) < self::EPS && abs( $p[1] - $np[1] ) < self::EPS && abs( $p[2] - $np[2] ) < self::EPS ) {
+				return;
+			}
+		}
+		$points[] = $np;
 	}
 }

@@ -429,27 +429,31 @@ and nothing packs before `/rates`:
 2. **`fits_box(requirements, box) → bool`** and
    **`select_smallest(requirements, boxes[]) → box | no_box_fits`** — box-**aware**. Run
    **after** `/rates`, over the boxes extracted from the returned `service_level` objects.
-   Verifies every item physically fits the candidate box (rotated), enforces the box's
-   actual maximum weight and cumulative-volume ceiling, and picks the **smallest fitting**
-   box among those the API actually returned.
+   Enforces the box's actual maximum weight; verifies the largest item fits (rotated); and,
+   for **more than one physical unit**, proves the items can **coexist spatially** via a
+   conservative constructive placement (extreme-point best-fit with real coordinates + a
+   true overlap test, 6 orientations) — aggregate volume alone is insufficient (two 40³ cubes
+   pass an 80 % volume gate yet cannot coexist in a 60×41×69 box). A single dimensionally-
+   fitting unit needs no placement search. Picks the **smallest fitting** box among those the
+   API actually returned.
 
 **Locked executable order (no circularity):**
 
 ```
 locker selected (server-validated)
   → packer.compute_requirements(cart)            # box-independent; may short-circuit ineligible
-  → [optional] cheap static XS…XL pre-check       # skip /rates for obviously-too-big orders
   → POST /api/v1/rates (destination terminal)     # returns service levels + their boxes
   → boxes = extract service_level.{box_type,dimensions} from returned rates
   → packer.select_smallest(requirements, boxes)   # authoritative fit against RETURNED boxes
   → chosen service level → _locker rate
 ```
 
-The optional static XS…XL pre-check uses the documented catalogue **only** to short-circuit
-grossly ineligible orders (e.g. > 20 kg / longer than XL) before spending a `/rates` call; it
-**never** overrides a live response — actual availability and selection come from the
-**returned** services. If the packer needs M but only XS and XL come back, XL (next larger
-fitting) is chosen; if nothing returned fits → `no_box_fits` → TCG Locker is **not** offered.
+There is **no static pre-`/rates` short-circuit**: the static XS…XL catalogue is
+non-authoritative and a provider could return a box larger than it, so skipping `/rates`
+on a static check could hide a valid larger box. `/rates` is always called once a locker is
+selected; the returned services alone determine availability. If the packer needs M but only
+XS and XL come back, XL (next larger fitting) is chosen; if nothing returned fits →
+`no_box_fits` → TCG Locker is **not** offered. (`STATIC_BOXES` survives only as test data.)
 
 Requirements enforced across the two methods:
 
@@ -457,12 +461,17 @@ Requirements enforced across the two methods:
 - reject missing / non-positive weight (never optimistic on missing data);
 - allow rotation of item dimensions;
 - verify **every** item physically fits the candidate box (rotated);
-- account for **cumulative volume**, not just max item dimensions;
-- apply a **conservative fill factor** (documented constant, < 1.0);
+- prove multiple units can **coexist spatially** (constructive placement), not just that
+  each fits and the volumes sum under a ceiling;
+- apply a **conservative fill factor** (`FILL_FACTOR = 0.80`) to cumulative volume as a cheap
+  necessary pre-filter (the placement search is the sufficient check);
 - enforce the box's **actual maximum weight**;
 - choose the **smallest valid box** among those the API actually returned;
-- return structured ineligibility reasons (`too_heavy`, `too_long`, `volume_overflow`,
-  `missing_dimensions`, `missing_weight`, `no_box_fits`, `product_excluded`);
+- return structured ineligibility reasons — box-independent (`compute_requirements`):
+  `no_items`, `product_excluded`, `missing_quantity`, `missing_weight`, `missing_dimensions`;
+  box-aware (`select_smallest`): `no_box_fits`, `no_services`;
+- reject (never optimistically accept) more units than can be cheaply demonstrated
+  (`MAX_PLACEMENT_UNITS`);
 - honour an explicit product-level "ship separately / locker ineligible" override;
 - handle single-SKU ingredient kits with accurate packed dimensions well.
 

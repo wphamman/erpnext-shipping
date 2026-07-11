@@ -164,11 +164,27 @@ es_test( 'select_smallest with no services → no_services; empty cart → no_it
 	es_eq( 'no_items', $empty['reason'] ?? null, 'empty cart' );
 } );
 
-es_test( 'plausibly_fits_any pre-check short-circuits obviously oversized orders', function () {
-	$ok  = ES_TCG_Locker_Packer::compute_requirements( array( es_line( 1, 3, 20, 20, 10 ) ) );
-	$big = ES_TCG_Locker_Packer::compute_requirements( array( es_line( 1, 25, 10, 10, 10 ) ) );
-	$long = ES_TCG_Locker_Packer::compute_requirements( array( es_line( 1, 1, 70, 10, 10 ) ) );
-	es_ok( ES_TCG_Locker_Packer::plausibly_fits_any( $ok ), 'normal order plausibly fits' );
-	es_ok( ! ES_TCG_Locker_Packer::plausibly_fits_any( $big ), '25kg order fits no static box' );
-	es_ok( ! ES_TCG_Locker_Packer::plausibly_fits_any( $long ), 'over-long order fits no static box' );
+es_test( 'spatial coexistence — two 40³ cubes do NOT fit XL (aggregate-volume trap)', function () {
+	// Each cube fits XL individually and their combined volume (128,000 cm³) is
+	// below XL usable volume (135,792 cm³), but no axis can hold both: any pairing
+	// needs 80cm on some axis, exceeding every box dimension. Must be rejected.
+	$req = ES_TCG_Locker_Packer::compute_requirements( array( es_line( 2, 5, 40, 40, 40 ) ) );
+	$xl  = ES_TCG_Locker_Packer::STATIC_BOXES['XL'];
+	es_ok( ! ES_TCG_Locker_Packer::fits_box( $req, $xl ), 'two 40³ cubes cannot coexist in XL' );
+	$r = es_pick( array( es_line( 2, 5, 40, 40, 40 ) ), array( 'XS', 'S', 'M', 'L', 'XL' ) );
+	es_eq( 'no_box_fits', $r['reason'] ?? null, 'order offered no locker' );
+} );
+
+es_test( 'spatial coexistence — two 20³ cubes DO fit (packable control, not over-rejected)', function () {
+	// Two 20cm cubes sit side by side along the 60cm axis of M; must be accepted.
+	$req = ES_TCG_Locker_Packer::compute_requirements( array( es_line( 2, 1, 20, 20, 15 ) ) );
+	$m   = ES_TCG_Locker_Packer::STATIC_BOXES['M'];
+	es_ok( ES_TCG_Locker_Packer::fits_box( $req, $m ), 'two 20×20×15 items coexist in M' );
+} );
+
+es_test( 'over the placement unit cap → conservative reject', function () {
+	// 200 tiny units exceed MAX_PLACEMENT_UNITS; a fit cannot be demonstrated cheaply.
+	$req = ES_TCG_Locker_Packer::compute_requirements( array( es_line( 200, 0.001, 1, 1, 1 ) ) );
+	es_ok( ! empty( $req['over_unit_cap'] ), 'over_unit_cap flagged' );
+	es_ok( ! ES_TCG_Locker_Packer::fits_box( $req, ES_TCG_Locker_Packer::STATIC_BOXES['XL'] ), 'rejected rather than optimistically accepted' );
 } );
