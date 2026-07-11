@@ -86,29 +86,39 @@ function es_shipping_init() {
 add_action( 'woocommerce_shipping_init', 'es_shipping_init' );
 
 /**
- * Read TCG Locker settings from the first configured ES shipping-method instance
- * (settings live in woocommerce_erpnext_shipping_{id}_settings). Returns the
- * settings array, or an empty array when no instance is configured.
+ * Read TCG Locker settings from the ES shipping-method instances (settings live
+ * in woocommerce_erpnext_shipping_{id}_settings).
+ *
+ * Deterministic instance contract: rows are ordered by option_name, and the
+ * FIRST instance with tcg_locker_enabled === 'yes' wins. This prevents a
+ * disabled instance that merely happens to sort first from silently shadowing a
+ * genuinely-configured, enabled one. When no instance is enabled, the first
+ * instance (by option_name) is returned so the settings screen still reads a
+ * stable value (the factory will then see enabled=no and return null).
+ *
+ * @return array Settings array, or empty array when no instance exists.
  */
 function es_tcg_locker_settings() {
     global $wpdb;
     $rows = $wpdb->get_col(
-        "SELECT option_value FROM {$wpdb->options} WHERE option_name LIKE 'woocommerce_erpnext_shipping_%_settings'"
+        "SELECT option_value FROM {$wpdb->options}
+         WHERE option_name LIKE 'woocommerce_erpnext_shipping_%_settings'
+         ORDER BY option_name ASC"
     );
-    $first = array();
+    $first_any = array();
     foreach ( (array) $rows as $val ) {
         $opts = maybe_unserialize( $val );
         if ( ! is_array( $opts ) ) {
             continue;
         }
-        if ( empty( $first ) ) {
-            $first = $opts;
+        if ( empty( $first_any ) ) {
+            $first_any = $opts;
         }
-        if ( isset( $opts['tcg_locker_enabled'] ) ) {
-            return $opts;
+        if ( 'yes' === ( $opts['tcg_locker_enabled'] ?? 'no' ) ) {
+            return $opts; // First enabled instance (deterministic by option_name).
         }
     }
-    return $first;
+    return $first_any;
 }
 
 /**

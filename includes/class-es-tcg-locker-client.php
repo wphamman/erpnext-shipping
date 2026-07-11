@@ -141,20 +141,33 @@ class ES_TCG_Locker_Client {
 	}
 
 	/**
-	 * Validate an API base: http(s) scheme, a host, and a path that ends
-	 * EXACTLY in /api/v1 (trailing slash tolerated). A URL that merely
-	 * contains /api/v1 elsewhere (e.g. .../api/v1/foo) is rejected, because
-	 * origin derivation only strips a terminal segment.
+	 * Validate an API base. Requires:
+	 *  - HTTPS scheme (a Bearer token must never travel over plain HTTP);
+	 *  - a host;
+	 *  - NO userinfo, query, or fragment (userinfo leaks creds; a query would
+	 *    also defeat the terminal-/api/v1 origin derivation);
+	 *  - a path that ends EXACTLY in /api/v1 (trailing slash tolerated). A URL
+	 *    that merely contains /api/v1 elsewhere (e.g. .../api/v1/foo) is rejected.
 	 */
 	public static function is_valid_api_base( $url ) {
 		$url = self::normalize_base( $url );
 		if ( '' === $url ) {
 			return false;
 		}
-		$scheme = parse_url( $url, PHP_URL_SCHEME );
-		$host   = parse_url( $url, PHP_URL_HOST );
-		$path   = parse_url( $url, PHP_URL_PATH );
-		return in_array( $scheme, array( 'http', 'https' ), true ) && ! empty( $host ) && '/api/v1' === $path;
+		$parts = parse_url( $url );
+		if ( ! is_array( $parts ) ) {
+			return false;
+		}
+		if ( 'https' !== ( $parts['scheme'] ?? '' ) ) {
+			return false;
+		}
+		if ( empty( $parts['host'] ) ) {
+			return false;
+		}
+		if ( isset( $parts['user'] ) || isset( $parts['pass'] ) || isset( $parts['query'] ) || isset( $parts['fragment'] ) ) {
+			return false;
+		}
+		return '/api/v1' === ( $parts['path'] ?? '' );
 	}
 
 	public function get_api_base() {
@@ -171,8 +184,11 @@ class ES_TCG_Locker_Client {
 	 */
 	public static function redact( $str ) {
 		$str = (string) $str;
+		// Match the whole token/credential up to a delimiter. Provider tokens can
+		// contain pipes and other punctuation (e.g. "62429|secret"), so redact any
+		// run that is not whitespace or a quote — over-redaction is safe.
 		$str = preg_replace( '/(api_key=)[^&\s"\']+/i', '$1[REDACTED]', $str );
-		$str = preg_replace( '/(Bearer\s+)[A-Za-z0-9._\-]+/i', '$1[REDACTED]', $str );
+		$str = preg_replace( '/(Bearer\s+)[^\s"\']+/i', '$1[REDACTED]', $str );
 		return $str;
 	}
 
@@ -562,7 +578,9 @@ class ES_TCG_Locker_Client {
 		}
 		return array(
 			'shipment_id'  => (string) $id,
-			'tracking_ref' => (string) ( $node['waybill'] ?? $node['tracking_reference'] ?? $node['tracking_number'] ?? '' ),
+			// The published L2L response carries the tracking reference in
+			// custom_tracking_reference; keep the others as tolerant fallbacks.
+			'tracking_ref' => (string) ( $node['custom_tracking_reference'] ?? $node['waybill'] ?? $node['tracking_reference'] ?? $node['tracking_number'] ?? '' ),
 		);
 	}
 

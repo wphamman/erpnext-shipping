@@ -13,13 +13,18 @@ defined( 'ABSPATH' ) || exit;
 const ES_TEST_BASE  = 'https://sandbox.api-pudo.co.za/api/v1';
 const ES_TEST_TOKEN = 'SANDBOX_TOKEN_SECRET';
 
-es_test( 'is_valid_api_base — exact terminal /api/v1', function () {
+es_test( 'is_valid_api_base — exact terminal /api/v1, HTTPS-only, no userinfo/query/fragment', function () {
 	es_ok( ES_TCG_Locker_Client::is_valid_api_base( 'https://sandbox.api-pudo.co.za/api/v1' ), 'sandbox base valid' );
 	es_ok( ES_TCG_Locker_Client::is_valid_api_base( 'https://sandbox.api-pudo.co.za/api/v1/' ), 'trailing slash tolerated' );
 	es_ok( ! ES_TCG_Locker_Client::is_valid_api_base( 'https://sandbox.api-pudo.co.za/api/v1/foo' ), 'containing-not-terminal rejected' );
 	es_ok( ! ES_TCG_Locker_Client::is_valid_api_base( 'sandbox.api-pudo.co.za/api/v1' ), 'missing scheme rejected' );
 	es_ok( ! ES_TCG_Locker_Client::is_valid_api_base( 'https://host/v1' ), 'wrong path rejected' );
 	es_ok( ! ES_TCG_Locker_Client::is_valid_api_base( '' ), 'empty rejected' );
+	// Tightened rules (Phase-1 review).
+	es_ok( ! ES_TCG_Locker_Client::is_valid_api_base( 'http://sandbox.api-pudo.co.za/api/v1' ), 'http rejected (Bearer needs TLS)' );
+	es_ok( ! ES_TCG_Locker_Client::is_valid_api_base( 'https://sandbox.api-pudo.co.za/api/v1?x=1' ), 'query string rejected (breaks origin derivation)' );
+	es_ok( ! ES_TCG_Locker_Client::is_valid_api_base( 'https://sandbox.api-pudo.co.za/api/v1#frag' ), 'fragment rejected' );
+	es_ok( ! ES_TCG_Locker_Client::is_valid_api_base( 'https://user:pass@sandbox.api-pudo.co.za/api/v1' ), 'embedded userinfo rejected' );
 } );
 
 es_test( 'origin derivation', function () {
@@ -143,7 +148,7 @@ es_test( 'create_shipment builds the L2L payload and parses ids', function () {
 
 	es_ok( ! empty( $res['ok'] ), 'shipment ok' );
 	es_eq( 'SHP-1001', $res['shipment_id'], 'shipment_id parsed' );
-	es_eq( 'WB123456', $res['tracking_ref'], 'tracking_ref parsed' );
+	es_eq( 'WB123456', $res['tracking_ref'], 'tracking_ref parsed from published custom_tracking_reference' );
 
 	$call = $tx->last_call();
 	es_contains( $call['url'], '/api/v1/shipments', 'hits /api/v1/shipments' );
@@ -158,6 +163,10 @@ es_test( 'create_shipment builds the L2L payload and parses ids', function () {
 es_test( 'label URL is origin-relative with key in query; token never logged', function () {
 	es_not_contains( ES_TCG_Locker_Client::redact( 'GET https://h/generate/waybill/1?api_key=SECRET&x=1' ), 'SECRET', 'redact scrubs api_key' );
 	es_not_contains( ES_TCG_Locker_Client::redact( 'Authorization: Bearer SECRETTOKEN' ), 'SECRETTOKEN', 'redact scrubs Bearer' );
+	// Provider tokens are pipe-delimited (e.g. "62429|secret") — the part after
+	// the pipe must not survive redaction.
+	es_not_contains( ES_TCG_Locker_Client::redact( 'Authorization: Bearer 62429|s3cr3tpart' ), 's3cr3tpart', 'redact scrubs pipe-delimited Bearer token' );
+	es_not_contains( ES_TCG_Locker_Client::redact( 'url ...?api_key=62429|s3cr3tpart&y=2' ), 's3cr3tpart', 'redact scrubs pipe-delimited api_key token' );
 
 	$log    = array();
 	$logger = function ( $lvl, $msg ) use ( &$log ) {

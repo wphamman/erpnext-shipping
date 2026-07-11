@@ -1,7 +1,7 @@
 {
   "shipment": {
     "id": "SHP-1001",
-    "waybill": "WB123456",
+    "custom_tracking_reference": "WB123456",
     "status": "submitted"
   }
 }
