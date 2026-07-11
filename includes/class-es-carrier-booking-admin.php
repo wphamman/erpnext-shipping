@@ -263,7 +263,7 @@ class ES_Carrier_Booking_Admin {
 		if ( '1' === $snapshot[ ES_Carrier_Booking::M_IS_SPLIT ] ) {
 			return array( 'ok' => false, 'error' => __( 'Split shipments must be booked as separate consignments in the carrier portal.', 'erpnext-shipping' ) );
 		}
-		if ( ! in_array( 'wc-' . $order->get_status(), wc_get_is_paid_statuses(), true ) && ! $order->is_paid() ) {
+		if ( ! $order->is_paid() ) {
 			return array( 'ok' => false, 'error' => __( 'The order must be paid before booking.', 'erpnext-shipping' ) );
 		}
 		$settings = self::settings_for_snapshot( $snapshot );

@@ -10,12 +10,11 @@ class ES_Fulfillment_Cron {
     /** Max orders to poll per cron run (PHP timeout safety). */
     const BATCH_SIZE = 50;
 
-    /**
-     * Slots reserved for pre-shipment TCG Locker orders BEFORE the legacy fill
-     * (half the batch). Guarantees a legacy backlog cannot starve locker orders'
-     * first transition; unused reserve is reclaimed by the legacy fill / top-up.
-     */
-    const LOCKER_POLL_RESERVE = 25;
+	/**
+	 * Slots reserved for booked shipments still in a pre-shipment WC state before
+	 * the legacy completed-order fill. Shared fairly by Locker and door bookings.
+	 */
+	const PRE_SHIPMENT_POLL_RESERVE = 25;
 
     /** Forward-only status order (index = priority). */
     private static $status_priority = array(
@@ -99,7 +98,13 @@ class ES_Fulfillment_Cron {
             // category still applies unpolled-first anti-starvation internally, and
             // any unused reserve is reclaimed by the legacy fill / the locker top-up
             // below — so no batch capacity is wasted when one category is empty.
-            $orders = self::merge_locker_orders( array(), min( self::BATCH_SIZE, self::LOCKER_POLL_RESERVE ) );
+			// Split the reserve between the two pre-shipment booking families. Each
+			// receives guaranteed slots, while an under-filled first family leaves its
+			// unused capacity available to the second.
+			$reserve_cap = min( self::BATCH_SIZE, self::PRE_SHIPMENT_POLL_RESERVE );
+			$orders = self::merge_locker_orders( array(), (int) ceil( $reserve_cap / 2 ) );
+			$orders = self::merge_door_booking_orders( $orders, $reserve_cap );
+			$orders = self::merge_locker_orders( $orders, $reserve_cap );
             $have   = array();
             foreach ( $orders as $o ) {
                 $have[ $o->get_id() ] = true;
@@ -155,7 +160,8 @@ class ES_Fulfillment_Cron {
             // Reclaim any slots the legacy fill left unused with more locker orders
             // (idempotent — merge_locker_orders de-duplicates), so a small legacy
             // backlog never wastes capacity.
-            $orders = self::merge_locker_orders( $orders, self::BATCH_SIZE );
+			$orders = self::merge_locker_orders( $orders, self::BATCH_SIZE );
+			$orders = self::merge_door_booking_orders( $orders, self::BATCH_SIZE );
 
             if ( empty( $orders ) ) {
                 return;
@@ -364,6 +370,54 @@ class ES_Fulfillment_Cron {
 
         return $orders;
     }
+
+	/**
+	 * Add manually-booked Courier Guy/MDS orders that have not yet advanced out of
+	 * Processing. Without this union the legacy selector (completed/partially-
+	 * shipped only) could never observe the carrier's first in-transit event.
+	 */
+	private static function merge_door_booking_orders( $orders, $cap ) {
+		if ( ! class_exists( 'ES_Carrier_Booking' ) ) {
+			return $orders;
+		}
+		$have = array();
+		foreach ( $orders as $order ) {
+			$have[ $order->get_id() ] = true;
+		}
+		$statuses = array( 'processing', 'on-hold', 'completed', 'partially-shipped' );
+		$booked   = array(
+			array( 'key' => ES_Carrier_Booking::M_SHIPMENT_ID, 'compare' => 'EXISTS' ),
+			array( 'key' => ES_Carrier_Booking::M_BOOKING_STATUS, 'value' => ES_Carrier_Booking::STATE_BOOKED, 'compare' => '=' ),
+		);
+		$add = function ( $found ) use ( &$orders, &$have ) {
+			foreach ( $found as $order ) {
+				$id = $order->get_id();
+				if ( ! isset( $have[ $id ] ) ) {
+					$orders[]   = $order;
+					$have[ $id ] = true;
+				}
+			}
+		};
+
+		$remaining = $cap - count( $orders );
+		if ( $remaining > 0 ) {
+			$add( wc_get_orders( array(
+				'status' => $statuses, 'exclude' => array_map( 'intval', array_keys( $have ) ),
+				'meta_query' => array_merge( $booked, array( array( 'key' => '_es_last_polled', 'compare' => 'NOT EXISTS' ) ) ),
+				'limit' => $remaining,
+			) ) );
+		}
+		$remaining = $cap - count( $orders );
+		if ( $remaining > 0 ) {
+			$add( wc_get_orders( array(
+				'status' => $statuses, 'exclude' => array_map( 'intval', array_keys( $have ) ),
+				'meta_query' => array_merge( $booked, array( array( 'key' => '_es_last_polled', 'compare' => 'EXISTS' ) ) ),
+				'orderby' => 'meta_value_num', 'meta_key' => '_es_last_polled', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+				'order' => 'ASC', 'limit' => $remaining,
+			) ) );
+		}
+		return $orders;
+	}
 
     /**
      * Resolve carrier tokens from any shipping-method instance settings.
