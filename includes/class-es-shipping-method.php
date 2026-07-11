@@ -626,6 +626,11 @@ class ES_Shipping_Method extends WC_Shipping_Method {
         // 4. Add optional own-vehicle / bulk delivery rate.
         $bulk_delivery_added = $this->maybe_add_bulk_delivery_rate( $destination, $plan, $cart_total );
 
+        // 4b. Add optional TCG Locker (L2L) rate when a destination locker is
+        // selected. Independent of carrier door rates; never offered for split
+        // plans. Failures here leave all other rates intact.
+        $this->maybe_add_locker_rate( $plan, $cart_total, $package );
+
         // 5. Get carriers.
         $carriers = $this->get_carriers();
         if ( empty( $carriers ) ) {
@@ -799,6 +804,160 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             ) );
             $this->log( 'Rate added: ' . $label . ' R' . $cost . ' (' . $rate['carrier'] . ')' );
         }
+    }
+
+    /**
+     * Add the TCG Locker (Locker-to-Locker) rate when enabled and a valid
+     * destination locker has been selected at checkout.
+     *
+     * Guarded, credential-safe, and non-fatal: any miss (disabled, split plan,
+     * no dispatch-enabled origin, no locker selected, ineligible parcel, invalid
+     * locker, failed/empty quote, no fitting box) simply adds no rate and leaves
+     * every other shipping rate intact. Never books a shipment. Rate id ends in
+     * `_locker` so the free-shipping filter preserves it.
+     *
+     * @param array $plan       Fulfillment plan (single/chooseable/split).
+     * @param float $cart_total Cart subtotal.
+     * @param array $package    WC shipping package.
+     * @return bool True when the locker rate was added.
+     */
+    private function maybe_add_locker_rate( $plan, $cart_total, $package ) {
+        if ( 'yes' !== $this->get_option( 'tcg_locker_enabled', 'no' ) ) {
+            return false;
+        }
+        if ( ! class_exists( 'ES_TCG_Locker_Rate' ) || ! class_exists( 'ES_TCG_Locker_Packer' ) ) {
+            return false;
+        }
+
+        // Resolve a dispatch-enabled origin; null for split plans or when no
+        // eligible warehouse fulfils the order.
+        $origin_id = ES_TCG_Locker_Rate::dispatch_origin_for_plan( $plan, self::get_locations() );
+        if ( null === $origin_id ) {
+            $this->log( 'TCG Locker: no dispatch-enabled origin for this plan — not offered.' );
+            return false;
+        }
+
+        // Destination locker chosen at checkout (server-validated below). Without
+        // one, add no rate — the checkout selector prompts the customer instead.
+        $selected = class_exists( 'ES_TCG_Locker_Checkout' ) ? ES_TCG_Locker_Checkout::get_selected_locker() : null;
+        if ( empty( $selected['code'] ) ) {
+            return false;
+        }
+
+        $client = es_tcg_locker_client( $this->tcg_locker_settings_array() );
+        if ( ! $client ) {
+            $this->log( 'TCG Locker: client not configured.' );
+            return false;
+        }
+
+        // Locker eligibility from the conservative packer (box-independent phase).
+        $lines = $this->build_locker_lines( $package );
+        $req   = ES_TCG_Locker_Packer::compute_requirements( $lines );
+        if ( empty( $req['ok'] ) ) {
+            $this->log( 'TCG Locker: order not locker-eligible (' . ( $req['reason'] ?? 'unknown' ) . ').' );
+            return false;
+        }
+
+        // Server-side validate the selected locker against cached/live data.
+        $locker = $client->get_locker( $selected['code'] );
+        if ( ! $locker ) {
+            $this->log( 'TCG Locker: selected locker failed server-side validation — not offered.' );
+            return false;
+        }
+
+        // Quote L2L for the destination locker (collection type=locker).
+        $quote = $client->get_rates( $locker['code'] );
+        if ( empty( $quote['ok'] ) || empty( $quote['offers'] ) ) {
+            $this->log( 'TCG Locker: rate lookup failed or returned no services — not offered.' );
+            return false;
+        }
+
+        // Choose the smallest fitting box among the RETURNED services.
+        $pick = ES_TCG_Locker_Packer::select_smallest( $req, $quote['offers'] );
+        if ( empty( $pick['ok'] ) ) {
+            $this->log( 'TCG Locker: no returned service fits the order (' . ( $pick['reason'] ?? 'unknown' ) . ').' );
+            return false;
+        }
+        $offer = $pick['offer'];
+
+        // TCG-Locker-specific pricing (live/fixed/free), reconciled for VAT.
+        $pricing = ES_TCG_Locker_Rate::compute_pricing(
+            $offer,
+            $this->get_option( 'tcg_locker_pricing_mode', 'live' ),
+            floatval( $this->get_option( 'tcg_locker_fixed_customer_price', 0 ) ),
+            floatval( $this->get_option( 'tcg_locker_free_shipping_threshold', 0 ) ),
+            $cart_total
+        );
+
+        $label = $this->get_option( 'tcg_locker_rate_label', __( 'TCG Locker Delivery', 'erpnext-shipping' ) );
+        if ( ! empty( $locker['name'] ) ) {
+            $label .= ' — ' . $locker['name'];
+        }
+
+        $meta = ES_TCG_Locker_Rate::build_rate_meta( $locker, $offer, $origin_id, $pricing, time() );
+
+        $this->add_rate( array(
+            'id'        => $this->id . '_locker',
+            'label'     => $label,
+            'cost'      => $pricing['rate_cost_ex_vat'],
+            'meta_data' => $meta,
+        ) );
+        $this->log( 'TCG Locker rate added: ' . $label . ' — box ' . ( $offer['box_size'] ?? $offer['box_code'] ?? '?' ) . ', customer R' . $pricing['customer_charge_incl'] );
+        return true;
+    }
+
+    /**
+     * Build packer cart lines from the shipping package. Each line carries the
+     * per-unit weight/dimensions, quantity (fractional preserved), and a
+     * locker-eligibility flag driven by an explicit product opt-out
+     * (`_es_locker_ineligible` = yes) or membership of a
+     * tcg_locker_excluded_shipping_classes slug.
+     *
+     * @param array $package WC shipping package.
+     * @return array Packer lines.
+     */
+    private function build_locker_lines( $package ) {
+        $excluded_raw = trim( (string) $this->get_option( 'tcg_locker_excluded_shipping_classes', '' ) );
+        $excluded     = '' === $excluded_raw ? array() : array_map( 'trim', explode( ',', $excluded_raw ) );
+
+        $lines = array();
+        foreach ( $package['contents'] as $item ) {
+            $product = $item['data'];
+            if ( ! $product ) {
+                continue;
+            }
+
+            $eligible = true;
+            if ( 'yes' === $product->get_meta( '_es_locker_ineligible' ) ) {
+                $eligible = false;
+            } elseif ( ! empty( $excluded ) && in_array( $product->get_shipping_class(), $excluded, true ) ) {
+                $eligible = false;
+            }
+
+            $lines[] = array(
+                'sku'             => $product->get_sku(),
+                'qty'             => $item['quantity'],
+                'weight'          => floatval( $product->get_weight() ),
+                'length'          => floatval( $product->get_length() ),
+                'width'           => floatval( $product->get_width() ),
+                'height'          => floatval( $product->get_height() ),
+                'locker_eligible' => $eligible,
+            );
+        }
+        return $lines;
+    }
+
+    /**
+     * Minimal settings array for the TCG Locker client factory, read from this
+     * shipping-method instance.
+     */
+    private function tcg_locker_settings_array() {
+        return array(
+            'tcg_locker_enabled'      => $this->get_option( 'tcg_locker_enabled', 'no' ),
+            'tcg_locker_api_url'      => $this->get_option( 'tcg_locker_api_url', defined( 'ES_TCG_LOCKER_SANDBOX_BASE' ) ? ES_TCG_LOCKER_SANDBOX_BASE : '' ),
+            'tcg_locker_api_token'    => $this->get_option( 'tcg_locker_api_token', '' ),
+            'tcg_locker_rate_timeout' => $this->get_option( 'tcg_locker_rate_timeout', 15 ),
+        );
     }
 
     /**

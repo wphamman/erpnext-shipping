@@ -29,8 +29,11 @@ define( 'ES_TCG_LOCKER_SANDBOX_BASE', 'https://sandbox.api-pudo.co.za/api/v1' );
 require_once ES_SHIPPING_PATH . 'includes/class-es-tcg-locker-client.php';
 
 // Pure TCG Locker packer (locker eligibility + smallest-box selection). No side
-// effects; not wired into checkout until Phase 3.
+// effects.
 require_once ES_SHIPPING_PATH . 'includes/class-es-tcg-locker-packer.php';
+
+// Pure TCG Locker rate helpers (pricing, dispatch-origin, rate meta). No side effects.
+require_once ES_SHIPPING_PATH . 'includes/class-es-tcg-locker-rate.php';
 
 // Declare HPOS (High-Performance Order Storage) compatibility. The plugin already
 // uses HPOS-safe order APIs (wc_get_order, $order->get_meta, feature-detected order
@@ -175,6 +178,11 @@ function es_fulfillment_init() {
     }
 
     require_once ES_SHIPPING_PATH . 'includes/class-es-fulfillment-statuses.php';
+
+    // TCG Locker checkout selector — loads in BOTH modes (independent of the
+    // fulfillment mode); self-gates on the client being enabled + configured.
+    require_once ES_SHIPPING_PATH . 'includes/class-es-tcg-locker-checkout.php';
+    ES_TCG_Locker_Checkout::init();
 
     $mode = get_option( 'es_fulfillment_mode', 'migration' );
     if ( 'active' === $mode ) {

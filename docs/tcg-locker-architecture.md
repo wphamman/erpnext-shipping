@@ -421,8 +421,9 @@ and nothing packs before `/rates`:
 
 1. **`compute_requirements(cart_lines) → requirements | ineligible`** — box-**independent**.
    Runs **before** `/rates`. Produces the packed-order profile: total weight (float),
-   per-item rotated bounding dimensions, and **cumulative volume** (with the conservative
-   fill factor applied). Returns a structured ineligibility reason immediately for
+   per-item rotated bounding dimensions, per-unit geometry for placement, and **raw
+   cumulative volume** (the conservative fill factor is applied later, in `fits_box`, not
+   here). Returns a structured ineligibility reason immediately for
    box-independent failures (missing/non-positive weight, missing dimensions, an
    explicitly locker-ineligible product) — in which case `/rates` is **never** called.
 
@@ -463,8 +464,9 @@ Requirements enforced across the two methods:
 - verify **every** item physically fits the candidate box (rotated);
 - prove multiple units can **coexist spatially** (constructive placement), not just that
   each fits and the volumes sum under a ceiling;
-- apply a **conservative fill factor** (`FILL_FACTOR = 0.80`) to cumulative volume as a cheap
-  necessary pre-filter (the placement search is the sufficient check);
+- apply a **conservative fill factor** (`FILL_FACTOR = 0.80`) to cumulative volume in
+  `fits_box` as a cheap **conservative policy** pre-filter — it is a deliberate margin, not a
+  mathematical necessity (the constructive placement search is the sufficient check);
 - enforce the box's **actual maximum weight**;
 - choose the **smallest valid box** among those the API actually returned;
 - return structured ineligibility reasons — box-independent (`compute_requirements`):
