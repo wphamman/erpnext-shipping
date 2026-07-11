@@ -126,6 +126,9 @@ class ES_Carrier_Collivery extends ES_Carrier_Base {
                 'carrier'        => $this->get_carrier_name(),
                 'service_name'   => $service_name,
                 'service_code'   => $service_code,
+				// Booking requires the numeric Collivery service type, not its
+				// optional display code returned by the quote endpoint.
+				'booking_service'=> (string) $service_type,
                 'tier'           => $this->map_service_tier( strval( $service_type ) ),
                 'price_incl_vat' => round( $price, 2 ),
                 'estimated_days' => self::$service_days[ $service_type ] ?? 2,

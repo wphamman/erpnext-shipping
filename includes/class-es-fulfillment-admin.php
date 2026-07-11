@@ -93,7 +93,19 @@ class ES_Fulfillment_Admin {
             ES_TCG_Locker_Rate::M_QUOTE_TS,
             ES_TCG_Locker_Rate::M_PRICING_MODE,
         );
-        return array_values( array_unique( array_merge( (array) $hidden, $locker_keys ) ) );
+		$carrier_keys = array(
+			ES_Carrier_Booking::M_PROVIDER,
+			ES_Carrier_Booking::M_SERVICE_CODE,
+			ES_Carrier_Booking::M_SERVICE_NAME,
+			ES_Carrier_Booking::M_INSTANCE_ID,
+			ES_Carrier_Booking::M_ORIGIN_LOC,
+			ES_Carrier_Booking::M_PROVIDER_RATE,
+			ES_Carrier_Booking::M_CUSTOMER_CHG,
+			ES_Carrier_Booking::M_PARCELS,
+			ES_Carrier_Booking::M_QUOTE_TS,
+			ES_Carrier_Booking::M_IS_SPLIT,
+		);
+        return array_values( array_unique( array_merge( (array) $hidden, $locker_keys, $carrier_keys ) ) );
     }
 
     // ── Custom Columns ──
@@ -988,7 +1000,7 @@ class ES_Fulfillment_Admin {
 
         add_meta_box(
             'es-shipment-tracking',
-            __( 'Shipment Tracking', 'erpnext-shipping' ),
+			__( 'Carrier Fulfilment', 'erpnext-shipping' ),
             array( __CLASS__, 'render_meta_box' ),
             $screen,
             'side',
@@ -1065,6 +1077,8 @@ class ES_Fulfillment_Admin {
 
         <?php else : ?>
             <?php // ── DELIVERY FLOW ── ?>
+
+			<?php if ( class_exists( 'ES_Carrier_Booking_Admin' ) ) { ES_Carrier_Booking_Admin::render_for_order( $order ); } ?>
 
             <div id="es-tracking-items">
                 <?php if ( ! empty( $items ) ) : ?>

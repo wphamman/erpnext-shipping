@@ -130,6 +130,7 @@ class ES_Carrier_ShipLogic extends ES_Carrier_Base {
                 'carrier'        => $this->get_carrier_name(),
                 'service_name'   => $service_name,
                 'service_code'   => $service_code,
+				'booking_service'=> $service_code,
                 'tier'           => $this->map_service_tier( $service_code ),
                 'price_incl_vat' => round( $price, 2 ),
                 'estimated_days' => $days,

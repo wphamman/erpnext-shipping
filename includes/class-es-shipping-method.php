@@ -49,6 +49,23 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'default'     => '',
                 'description' => __( 'Your business name as it should appear on shipping labels and waybills (e.g. "My Store").', 'erpnext-shipping' ),
             ),
+			'dispatch_contact_name' => array(
+				'title'       => __( 'Dispatch Contact Name', 'erpnext-shipping' ),
+				'type'        => 'text',
+				'default'     => '',
+				'description' => __( 'Named warehouse contact printed on carrier waybills.', 'erpnext-shipping' ),
+			),
+			'dispatch_contact_email' => array(
+				'title'       => __( 'Dispatch Contact Email', 'erpnext-shipping' ),
+				'type'        => 'email',
+				'default'     => '',
+			),
+			'dispatch_contact_phone' => array(
+				'title'       => __( 'Dispatch Contact Phone', 'erpnext-shipping' ),
+				'type'        => 'text',
+				'default'     => '',
+				'description' => __( 'Required before Courier Guy or MDS bookings can be created.', 'erpnext-shipping' ),
+			),
             'locations_notice' => array(
                 'title' => __( 'Dispatch Locations', 'erpnext-shipping' ),
                 'type'  => 'locations_notice',
@@ -698,6 +715,11 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             $cache_key = $cache->build_key( $origin, $destination, $parcels );
             $cached = $cache->get( $cache_key );
             if ( $cached !== false ) {
+				foreach ( $cached as &$cached_rate ) {
+					$cached_rate['origin_location_id'] = $lq['location'];
+					$cached_rate['booking_parcels']    = $parcels;
+				}
+				unset( $cached_rate );
                 $this->log( 'Cache hit for ' . $lq['location'] );
                 $location_rates[ $lq['location'] ] = $cached;
                 continue;
@@ -717,6 +739,11 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 try {
                     $carrier_rates = $carrier->get_rates( $origin, $destination, $parcels );
                     if ( is_array( $carrier_rates ) ) {
+						foreach ( $carrier_rates as &$carrier_rate ) {
+							$carrier_rate['origin_location_id'] = $lq['location'];
+							$carrier_rate['booking_parcels']    = $parcels;
+						}
+						unset( $carrier_rate );
                         $rates = array_merge( $rates, $carrier_rates );
                         $this->log( $carrier->get_carrier_name() . ' returned ' . count( $carrier_rates ) . ' rates for ' . $lq['location'] . ' in ' . round( microtime( true ) - $start_time, 1 ) . 's' );
                     } else {
@@ -792,6 +819,20 @@ class ES_Shipping_Method extends WC_Shipping_Method {
                 'Carrier' => $rate['carrier'],
                 'Service' => $rate['service_name'] ?? '',
             );
+			if ( ! $is_split && class_exists( 'ES_Carrier_Booking' ) ) {
+				$meta = array_merge(
+					$meta,
+					ES_Carrier_Booking::build_rate_meta(
+						$rate,
+						$rate['origin_location_id'] ?? '',
+						(array) ( $rate['booking_parcels'] ?? array() ),
+						$cost,
+						false,
+						null,
+						$this->instance_id
+					)
+				);
+			}
             if ( $is_split ) {
                 $meta['_es_is_split'] = '1';
             }

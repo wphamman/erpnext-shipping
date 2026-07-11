@@ -41,7 +41,8 @@ class ES_TCG_Locker_Admin {
 	const TRACKING_PROVIDER = 'tcg-locker';
 
 	public static function init() {
-		add_action( 'add_meta_boxes', array( __CLASS__, 'add_meta_box' ), 10, 2 );
+		// Controls are rendered inside the unified Shipment Tracking meta box by
+		// ES_Carrier_Booking_Admin. Keep only the hardened AJAX endpoints here.
 		add_action( 'wp_ajax_es_tcg_locker_book', array( __CLASS__, 'ajax_book' ) );
 		add_action( 'wp_ajax_es_tcg_locker_label', array( __CLASS__, 'ajax_label' ) );
 	}

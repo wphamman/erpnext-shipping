@@ -22,6 +22,8 @@ require dirname( __DIR__ ) . '/includes/class-es-tcg-locker-packer.php';
 require dirname( __DIR__ ) . '/includes/class-es-tcg-locker-rate.php';
 require dirname( __DIR__ ) . '/includes/class-es-tcg-locker-booking.php';
 require dirname( __DIR__ ) . '/includes/class-es-tcg-locker-tracking.php';
+require dirname( __DIR__ ) . '/includes/class-es-carrier-booking.php';
+require dirname( __DIR__ ) . '/includes/class-es-door-booking-client.php';
 
 $GLOBALS['es_test_pass']    = 0;
 $GLOBALS['es_test_fail']    = 0;
@@ -124,6 +126,19 @@ class ES_Array_Cache implements ES_TCG_Locker_Cache {
 
 	public function set( $key, $value, $ttl ) {
 		$this->store[ $key ] = $value;
+	}
+}
+
+class ES_Door_Fake_Transport implements ES_Door_Booking_Transport {
+	public $queue = array();
+	public $calls = array();
+	public function push( $code, $body, $error = null, $content_type = 'application/json' ) {
+		$this->queue[] = array( 'code' => $code, 'body' => $body, 'error' => $error, 'content_type' => $content_type );
+		return $this;
+	}
+	public function request( $method, $url, array $headers, $body, $timeout ) {
+		$this->calls[] = compact( 'method', 'url', 'headers', 'body', 'timeout' );
+		return $this->queue ? array_shift( $this->queue ) : array( 'code' => 0, 'body' => '', 'error' => 'empty queue', 'content_type' => '' );
 	}
 }
 

@@ -160,7 +160,7 @@ class ES_Admin_Page {
 
         $text_fields = array(
             'erp_url',
-            'title', 'company_name',
+			'title', 'company_name', 'dispatch_contact_name', 'dispatch_contact_email', 'dispatch_contact_phone',
             'bulk_delivery_label', 'bulk_delivery_quote_label',
             'tcg_locker_rate_label', 'tcg_locker_excluded_shipping_classes',
         );
@@ -423,6 +423,9 @@ class ES_Admin_Page {
                             <p class="description"><?php esc_html_e( 'Your business name as it should appear on shipping labels and waybills.', 'erpnext-shipping' ); ?></p>
                         </td>
                     </tr>
+					<?php $this->render_text_row( 'dispatch_contact_name', __( 'Dispatch Contact Name', 'erpnext-shipping' ), $v( 'dispatch_contact_name' ) ); ?>
+					<?php $this->render_text_row( 'dispatch_contact_email', __( 'Dispatch Contact Email', 'erpnext-shipping' ), $v( 'dispatch_contact_email' ) ); ?>
+					<?php $this->render_text_row( 'dispatch_contact_phone', __( 'Dispatch Contact Phone', 'erpnext-shipping' ), $v( 'dispatch_contact_phone' ) ); ?>
                     <tr>
                         <th><label for="debug"><?php esc_html_e( 'Debug Logging', 'erpnext-shipping' ); ?></label></th>
                         <td><label><input type="checkbox" name="debug" id="debug" value="1" <?php checked( $v( 'debug', 'yes' ), 'yes' ); ?>> <?php esc_html_e( 'Log shipping calculations to WooCommerce logs', 'erpnext-shipping' ); ?></label></td>

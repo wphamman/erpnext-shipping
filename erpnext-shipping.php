@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.13.2
+ * Version: 1.14.0
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Requires at least: 6.0
@@ -17,12 +17,16 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.13.2' );
+define( 'ES_SHIPPING_VERSION', '1.14.0' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // TCG Locker (PUDO) — sandbox API base default. Origin is derived by stripping
 // the terminal /api/v1. Production must be set explicitly (see docs/tcg-locker-architecture.md).
 define( 'ES_TCG_LOCKER_SANDBOX_BASE', 'https://sandbox.api-pudo.co.za/api/v1' );
+
+// Pure manual door-carrier booking contracts and injectable provider clients.
+require_once ES_SHIPPING_PATH . 'includes/class-es-carrier-booking.php';
+require_once ES_SHIPPING_PATH . 'includes/class-es-door-booking-client.php';
 
 // Isolated TCG Locker API client. No side effects at load; required early so
 // both the admin settings screen and the shipping-method flow can use it.
@@ -214,8 +218,10 @@ function es_fulfillment_init() {
 
         if ( is_admin() ) {
             require_once ES_SHIPPING_PATH . 'includes/class-es-diagnostics-page.php';
+			require_once ES_SHIPPING_PATH . 'includes/class-es-carrier-booking-admin.php';
             ES_Order_Actions::init();
             ES_Diagnostics_Page::init();
+			ES_Carrier_Booking_Admin::init();
 
             // TCG Locker admin order panel + manual, idempotent booking + label
             // proxy. Admin-only (includes admin-ajax); self-gates per order on a

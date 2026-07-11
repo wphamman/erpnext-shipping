@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-11
+
+### Added
+- **Unified carrier booking in the Woo order sidebar.** The existing *Shipment Tracking* box is now *Carrier Fulfilment*: it identifies the carrier/service the customer selected, shows customer charge versus provider quote, performs a read-only live cost check, and only then exposes an explicit **Confirm & book** action. TCG Locker reuses its existing hardened controls inside the same box rather than rendering a second competing panel.
+- **Manual booking for The Courier Guy door delivery and MDS Collivery.** New orders persist a hidden, exact booking snapshot (settings instance, dispatch location, provider service identifier, provider/customer prices and parcel geometry). Booking is available only for a paid, single-origin domestic order with complete addresses/contacts and resolvable products. Legacy/split orders fail safely to the existing portal + Add Tracking workflow.
+- **Two-stage spend confirmation.** A read-only fresh quote creates a five-minute, server-stored confirmation bound to the current origin, destination, contact, parcel geometry, carrier and service. The booking POST refuses expired confirmations or any intervening order change.
+- **Duplicate and uncertain-outcome protection.** Door booking uses a per-order atomic option mutex, a durable `booking` state saved before the provider call, a permanent shipment-id guard, and an `ambiguous` state for transport/timeout/5xx/unparseable success and HTTP 408/409/429. There is no automatic retry; operator recovery requires checking the carrier portal first.
+- **Carrier-native documents.** The Courier Guy waybill/sticker PDFs are fetched through its signed ShipLogic document endpoints; MDS waybill/label PDFs use Collivery's native document API. Credentials/signed URLs remain server-side, returned bytes must start with `%PDF-`, downloads force `application/pdf` + `nosniff`, and Courier Guy signed URLs are host-allowlisted.
+- **Dispatch contact settings.** Name, email and phone are available alongside Company Name; phone is required before an automatic door booking can be made.
+
+### Changed
+- Door-rate cache keys moved to `es_ship_v2_*` so orders placed immediately after upgrade cannot reuse a pre-v1.14 MDS quote that lacks the numeric booking service identifier.
+- New door orders hide the internal `_es_carrier_*` snapshot rows from the order-item display while retaining them for booking/audit.
+
 ## [1.13.2] - 2026-07-11
 
 ### Changed
