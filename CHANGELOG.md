@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-07-11
+
+### Added
+- **TCG Locker (PUDO) locker-to-locker delivery.** A first-class L2L delivery service alongside the door carriers, built on the published TCG Locker sandbox API contract. Default-disabled; enable per store under WooCommerce → ERPNext Shipping → *TCG Locker*.
+  - **Checkout locker selector** — dependency-free, accessible search/select of a destination locker in the classic-checkout review table (nonce-protected AJAX; selection lives in the session and is always re-validated server-side; no external map/CDN calls). Selecting recalculates shipping and adds a `_locker` rate.
+  - **Conservative parcel packer** — proves spatial *coexistence* of all cart items in a real locker box (extreme-point placement + overlap test, six orientations) and picks the smallest fitting box from the services the API actually returns. Never books a box the order can't physically fill.
+  - **VAT-reconciled pricing** — live / fixed / per-service free-threshold modes; the VAT-inclusive provider rate is split so WooCommerce applies exactly one 15% shipping tax (no double tax). Fails closed on a malformed or missing provider price — never a free or negative locker rate.
+  - **Manual, idempotent admin booking** — a "Book TCG Locker Shipment" order-panel action guarded by a capability check, a per-order nonce, an atomic ownership-token mutex with an immutable lease, a durable duplicate/in-progress guard, full pre-book re-validation (paid, destination locker, dispatch origin, current-order-still-fits-the-box), and a fresh cache-bypassing re-quote that refuses any price/box/revision drift from checkout. Never auto-books. An inconclusive attempt (transport/timeout/5xx/unparseable-2xx, or HTTP 408/409/429) becomes an *ambiguous* state that blocks re-booking until an operator reconciles against the TCG portal.
+  - **Authenticated label proxy** — waybill/sticker PDFs are streamed server-side (the api_key never reaches the browser or logs); only a genuine PDF is served, under a fixed `application/pdf` attachment.
+  - **Authenticated forward-only tracking** — the fulfilment poller polls booked locker shipments via the plugin's own Bearer client and maps statuses conservatively: accepted-handoff/transit → *Shipped*, `customer-collected`/`delivered` → *Delivered*, everything else (exceptions, cancellations, unknown) records only. Booked locker orders are polled even while still pre-shipment (a reserved batch slice prevents a conventional-order backlog from starving them).
+- **Split fulfilment never offers TCG Locker**; only warehouse locations flagged as a TCG Locker dispatch origin can dispatch a locker shipment (collection points never do).
+
 ### Security
 - **API credentials are now write-only in both settings surfaces.** Stored ERPNext keys/secrets, carrier tokens, and the Google Distance Matrix key are no longer rendered into admin-page HTML. Blank submissions preserve the existing value instead of clearing it.
 - **Tracking REST API keys now inherit their owner's order capabilities.** A valid WooCommerce key and permission level are no longer sufficient on their own; the owning user must also be permitted to read or edit shop orders.

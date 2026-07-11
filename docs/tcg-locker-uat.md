@@ -1,9 +1,11 @@
 # TCG Locker — Sandbox UAT Runbook
 
 Manual verification for behaviour that cannot be unit-tested locally (WooCommerce
-checkout, sessions, AJAX, tax). Run on a **staging** site pointed at the **sandbox** API.
-Do **not** book shipments or run on production. Phase 6 extends this into the full release
-runbook.
+checkout, sessions, AJAX, tax, order booking, cron). Run on a **staging** site pointed at
+the **sandbox** API (`https://sandbox.api-pudo.co.za/api/v1`). Booking a shipment against
+the sandbox is expected during UAT; **never run this against production or the production
+API**, and never book a real (non-sandbox) shipment. This is the full release runbook for
+the feature.
 
 ## Preconditions
 - Plugin active; a shipping zone with the ERPNext Shipping method.
@@ -54,9 +56,97 @@ runbook.
 - **Stale/tampered locker code**: editing the session/hidden value to a bogus code →
   server-side validation rejects it (no rate; order blocked).
 
+## Phase 4 — booking, admin panel, labels
+
+Place a **sandbox** locker order (complete checkout with a selected locker) so an order
+carries the `_es_tcg_locker_*` shipping-item snapshot. Open the order edit screen.
+
+1. **Panel appears only on locker orders.** A **"TCG Locker Shipment"** meta box shows the
+   destination locker, service, box, customer charge, provider (incl VAT) and quote time,
+   with a **"Book TCG Locker Shipment"** button. Non-locker orders show no such box.
+2. **Capability + nonce.** Confirm a user without the booking capability cannot book (the
+   button/AJAX is refused). The action carries a per-order nonce.
+3. **Book once (sandbox).** Click *Book* → success → the panel shows the shipment id +
+   tracking reference, and **Waybill**/**Sticker** buttons. Order meta:
+   `_es_tcg_locker_booking_status = booked`, `_es_tcg_locker_shipment_id`,
+   `_es_tcg_locker_tracking_ref`, `_es_tcg_locker_booked_ts`; a private order note records it;
+   exactly **one** AST tracking item (provider *TCG Locker*) is appended.
+4. **Idempotent — no double-book.** Reload and try again → refused ("already has a booked
+   shipment"). Rapid double-click does not create two shipments (mutex).
+5. **Drift refusal.** Before booking a fresh order, change the sandbox rate/box for that
+   destination (or wait for the quote to change) → *Book* refuses with a drift reason and
+   creates nothing; re-quote (re-select the locker at checkout) to proceed.
+6. **Pre-book validation.** An unpaid order, an order whose locker is now invalid, a
+   dispatch origin no longer flagged, or an order edited to no longer fit the box → *Book*
+   is refused with the specific reason; nothing is created.
+7. **Ambiguous state (no auto-retry).** Simulate an inconclusive result (e.g. point the
+   client at an endpoint that times out / returns 5xx for `/shipments`) → status becomes
+   `ambiguous`, the panel shows the "outcome unknown" warning, and re-booking is blocked.
+   The only path forward is **"I checked the portal — clear & allow re-book"**, which is
+   refused while a booking is still in flight and only clears a stale/finished attempt.
+8. **Label proxy.** Click **Waybill**/**Sticker** → a PDF downloads. Confirm the URL is
+   `admin-ajax.php?action=es_tcg_locker_label…` (nonce-protected) and **never** exposes the
+   `api_key`; a non-PDF provider response is refused (does not render as HTML).
+
+## Phase 5 — tracking poll (forward-only)
+
+With a booked sandbox order (status `booked`, a real tracking reference):
+
+1. **Poll runs.** Trigger the fulfilment poll (Diagnostics "Run now", or wait for the
+   15-min cron). The booked locker order is polled even while still **processing** (it is
+   selected by the meta-qualified query, reserved a batch slot so a backlog can't starve it).
+2. **Forward-only advancement.** As the sandbox status progresses: an accepted-handoff /
+   in-transit / `in-locker` status advances the order to **Shipped** (`completed`);
+   `customer-collected` / `delivered` advances to **Delivered**. Verify it **never regresses**
+   and does not re-fire once already at that status.
+3. **Record-only statuses.** An exception/cancellation/unknown status is recorded in
+   `_es_courier_status` (shown as *TCG Locker: …*) but does **not** change WC status.
+4. **No duplicate tracking items.** Repeated polls never append a second tracking item.
+5. **No-waybill fallback.** A booked order with an empty tracking reference records
+   `tcg-locker:no-tracking-ref` and is **not** polled by shipment id (no false failures).
+6. **Locker-only store.** With BOTH legacy carrier tokens blank but the locker client
+   configured, the poll still runs for locker orders (it is not skipped).
+
+## Production activation checklist
+
+Do these deliberately, in order, on the live site:
+
+- [ ] Confirm sandbox UAT above passed on staging.
+- [ ] Set the **production** API base + token in WooCommerce → ERPNext Shipping → *TCG
+      Locker* (production base is **unproven/frontend-observed** — verify it before use;
+      see `docs/tcg-locker-architecture.md`). Token fields are write-only.
+- [ ] Flag the correct **warehouse** location(s) as TCG Locker dispatch origins.
+- [ ] Confirm shipping is taxable at 15% (or set a shipping tax class) so VAT reconciles.
+- [ ] Enable **TCG Locker** (`tcg_locker_enabled = yes`) on the intended ES instance.
+- [ ] Smoke test: one real cart → locker rate quotes; do **not** book until a real order.
+- [ ] First real order: book once, print the waybill, confirm the tracking item + poll.
+- [ ] Watch `erpnext-shipping-tcg-locker` logs for the first day.
+
+## Rollback
+
+- **Instant, non-destructive:** set **TCG Locker → Enable = off** (`tcg_locker_enabled = no`).
+  The checkout selector, `_locker` rate, admin booking panel, and locker polling all vanish;
+  no order data is deleted and already-booked shipments keep their meta + tracking item.
+- The feature is default-disabled, so deactivating the plugin also removes it cleanly.
+- No production credentials, no auto-booking, and no scheduled jobs are added beyond the
+  existing 15-min fulfilment poll (which self-gates on booked locker orders existing).
+
+## Profitability reporting notes
+
+Each booked order stores both sides of the economics as order meta, so margin is auditable
+without a live API call:
+- `_es_tcg_locker_customer_charge` — what the customer paid (incl VAT).
+- `_es_tcg_locker_provider_rate` / `_es_tcg_locker_provider_rate_ex_vat` — the provider's
+  quoted cost (incl / ex VAT) at booking time.
+- `_es_tcg_locker_pricing_mode` — `live` | `fixed` | `free` (a `free` order still records the
+  provider cost, so free-shipping bleed is measurable).
+Margin per order = `customer_charge` − `provider_rate`. Under **free** mode this is negative
+by the provider cost; under **fixed** it is `fixed − provider_rate`. Aggregate across booked
+orders (filter by `_es_tcg_locker_booking_status = booked`) to size the channel's GP.
+
 ## Notes / assumptions
 - VAT handling assumes shipping is taxable at 15% (the ex-VAT cost is handed to WooCommerce,
   which applies the single shipping tax). If shipping is non-taxable, set a shipping tax
   class so VAT is applied once; otherwise the amount shows ex-VAT.
-- No shipment booking exists yet (Phase 4). Selecting a locker only quotes and persists the
-  choice as rate/shipping-item meta.
+- Some provider field names (contact keys, tracking status field) are confirmed only against
+  the sandbox contract — re-verify against production responses before wide rollout.
