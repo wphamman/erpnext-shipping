@@ -401,8 +401,14 @@ class ES_TCG_Locker_Client {
 	 * Each offer: service_code, service_name, box_code (provider ID),
 	 * box_name (label), box_size (derived), dimensions, rate,
 	 * rate_excluding_vat, rate_revision_id.
+	 *
+	 * @param string $dest_terminal_id Destination locker code.
+	 * @param bool   $force_refresh    Bypass the short quote cache and hit the API.
+	 *                                 Booking's fresh drift check passes true so it
+	 *                                 never certifies price against a stale (≤300s)
+	 *                                 checkout quote. A fresh result is still cached.
 	 */
-	public function get_rates( $dest_terminal_id ) {
+	public function get_rates( $dest_terminal_id, $force_refresh = false ) {
 		$dest_terminal_id = (string) $dest_terminal_id;
 		if ( '' === $dest_terminal_id ) {
 			return array( 'ok' => false, 'error' => 'no_destination' );
@@ -413,7 +419,7 @@ class ES_TCG_Locker_Client {
 		// destination — cacheable by env + destination code. The packer selects
 		// the box locally from these offers, so the cart is not part of the key.
 		$ck = $this->cache_key( 'rate_' . md5( $dest_terminal_id ) );
-		if ( $this->cache ) {
+		if ( ! $force_refresh && $this->cache ) {
 			$cached = $this->cache->get( $ck );
 			if ( is_array( $cached ) ) {
 				return array( 'ok' => true, 'offers' => $cached, 'cached' => true );

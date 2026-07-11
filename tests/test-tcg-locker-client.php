@@ -119,6 +119,26 @@ es_test( '/rates short cache: second call served from cache (no extra transport 
 	es_eq( 2, count( $tx->calls ), 'different destination → new transport call' );
 } );
 
+es_test( '/rates force_refresh bypasses the short cache (booking drift re-quote)', function () {
+	$tx    = ( new ES_Fake_Transport() )->push( 200, es_fixture( 'rates-l2l.json' ) );
+	$cache = new ES_Array_Cache();
+	$c     = new ES_TCG_Locker_Client( ES_TEST_BASE, 'T', $tx, $cache );
+
+	$c->get_rates( 'CG929' );
+	es_eq( 1, count( $tx->calls ), 'first call hits transport' );
+
+	// Without force: served from cache (no new call).
+	$c->get_rates( 'CG929' );
+	es_eq( 1, count( $tx->calls ), 'cached — no new call' );
+
+	// With force: must re-hit transport even though the cache is warm.
+	$tx->push( 200, es_fixture( 'rates-l2l.json' ) );
+	$r = $c->get_rates( 'CG929', true );
+	es_eq( 2, count( $tx->calls ), 'force_refresh bypasses cache → new transport call' );
+	es_ok( empty( $r['cached'] ), 'forced result is not flagged cached' );
+	es_eq( 3, count( $r['offers'] ), 'forced result still parses offers' );
+} );
+
 es_test( 'derive_box_size', function () {
 	es_eq( 'XS', ES_TCG_Locker_Client::derive_box_size( 'V4-XS' ), 'V4-XS -> XS' );
 	es_eq( 'S', ES_TCG_Locker_Client::derive_box_size( 'V4-S' ), 'V4-S -> S' );
@@ -207,6 +227,20 @@ es_test( 'create_shipment builds the L2L payload and parses ids', function () {
 	es_eq( 'L2LXL - ECO', $body['service_level_code'], 'exact persisted service code' );
 	es_eq( 'WH', $body['collection_contact']['name'], 'collection contact name' );
 	es_eq( '0820000000', $body['delivery_contact']['mobile_number'], 'delivery mobile normalised' );
+} );
+
+es_test( 'create_shipment parses a top-level (unwrapped) /shipments response', function () {
+	// Some responses carry id/custom_tracking_reference at the top level with no
+	// "shipment"/"data" wrapper — pin that parser branch.
+	$tx  = ( new ES_Fake_Transport() )->push( 200, es_fixture( 'shipment-create-unwrapped.json' ) );
+	$c   = new ES_TCG_Locker_Client( ES_TEST_BASE, 'T', $tx );
+	$res = $c->create_shipment( array(
+		'dest_terminal_id'   => 'CG929',
+		'service_level_code' => 'L2LL - ECO',
+	) );
+	es_ok( ! empty( $res['ok'] ), 'unwrapped shipment ok' );
+	es_eq( 'SHP-2002', $res['shipment_id'], 'shipment_id parsed from top level' );
+	es_eq( 'WB778899', $res['tracking_ref'], 'tracking_ref parsed from top level' );
 } );
 
 es_test( 'label URL is origin-relative with key in query; token never logged', function () {

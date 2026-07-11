@@ -20,6 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 require dirname( __DIR__ ) . '/includes/class-es-tcg-locker-client.php';
 require dirname( __DIR__ ) . '/includes/class-es-tcg-locker-packer.php';
 require dirname( __DIR__ ) . '/includes/class-es-tcg-locker-rate.php';
+require dirname( __DIR__ ) . '/includes/class-es-tcg-locker-booking.php';
 
 $GLOBALS['es_test_pass']    = 0;
 $GLOBALS['es_test_fail']    = 0;
