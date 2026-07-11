@@ -124,25 +124,55 @@ Do these deliberately, in order, on the live site:
 
 ## Rollback
 
-- **Instant, non-destructive:** set **TCG Locker → Enable = off** (`tcg_locker_enabled = no`).
-  The checkout selector, `_locker` rate, admin booking panel, and locker polling all vanish;
-  no order data is deleted and already-booked shipments keep their meta + tracking item.
-- The feature is default-disabled, so deactivating the plugin also removes it cleanly.
-- No production credentials, no auto-booking, and no scheduled jobs are added beyond the
-  existing 15-min fulfilment poll (which self-gates on booked locker orders existing).
+Setting **TCG Locker → Enable = off** (`tcg_locker_enabled = no`) is the primary rollback, but
+be precise about what it does and does **not** do:
+
+- **Stops NEW sales cleanly.** The checkout selector and the `_locker` rate self-gate on the
+  configured client, so with the feature disabled no new locker quotes appear and no new
+  orders can select a locker. This is instant and non-destructive.
+- **Does NOT hide the admin panel on existing orders.** The *TCG Locker Shipment* meta box
+  registers whenever an order carries the persisted `_es_tcg_locker_*` shipping-item snapshot —
+  it does **not** check `tcg_locker_enabled`. So already-quoted/booked orders still show the
+  panel. The **Book** action, however, is inert while disabled (it resolves the client and
+  fails "TCG Locker is not configured"), so no new bookings can be made.
+- **Does NOT stop the tracking poll for already-booked orders.** Booked locker orders remain
+  selected by the fulfilment poll (they match on `_es_tcg_locker_shipment_id` /
+  `booking_status = booked`, not on the enable flag). If cron keeps running for the legacy
+  carriers and the locker client is disabled/unconfigured, those locker polls **fail** and can
+  increment the per-order watchdog failure counter. **Therefore, to roll back while locker
+  orders are still in flight, LEAVE the API token configured** (disabling *Enable* alone stops
+  new sales) so tracking completes normally; only remove the token once no booked locker order
+  is still being polled (i.e. all have reached a terminal state).
+- **Credentials persist.** Disabling does not clear the stored API base/token (write-only
+  fields). Clear them explicitly if you want the client fully gone — accepting the poll-failure
+  behaviour above for any still-in-flight booked orders.
+- **Full removal:** the feature is default-disabled, so deactivating the plugin removes it
+  entirely (checkout, panel, and poll). No auto-booking and no new scheduled jobs are added
+  beyond the existing 15-min fulfilment poll.
 
 ## Profitability reporting notes
 
-Each booked order stores both sides of the economics as order meta, so margin is auditable
-without a live API call:
-- `_es_tcg_locker_customer_charge` — what the customer paid (incl VAT).
-- `_es_tcg_locker_provider_rate` / `_es_tcg_locker_provider_rate_ex_vat` — the provider's
-  quoted cost (incl / ex VAT) at booking time.
-- `_es_tcg_locker_pricing_mode` — `live` | `fixed` | `free` (a `free` order still records the
-  provider cost, so free-shipping bleed is measurable).
-Margin per order = `customer_charge` − `provider_rate`. Under **free** mode this is negative
-by the provider cost; under **fixed** it is `fixed − provider_rate`. Aggregate across booked
-orders (filter by `_es_tcg_locker_booking_status = booked`) to size the channel's GP.
+Both sides of the economics are captured, so margin is auditable without a live API call — but
+mind **where** each value lives:
+
+- **On the order's SHIPPING LINE ITEM** (the checkout quote, copied there from the `_locker`
+  rate's meta; read via `$order->get_items('shipping')` → `$item->get_meta(...)`, **not** as
+  order-level meta):
+  - `_es_tcg_locker_customer_charge` — what the customer paid (incl VAT).
+  - `_es_tcg_locker_provider_rate` / `_es_tcg_locker_provider_rate_ex_vat` — the provider's
+    quoted cost (incl / ex VAT).
+  - `_es_tcg_locker_pricing_mode` — `live` | `fixed` | `free` (a `free` order still records the
+    provider cost, so free-shipping bleed is measurable).
+  - These are the **checkout-time quote** — booking re-validates against a fresh quote (and
+    refuses on drift) but does **not** re-stamp these values, so they equal what was charged.
+- **At the ORDER level** (written by the booking action via `update_meta_data`): the outcome
+  keys `_es_tcg_locker_booking_status` (`booked` etc.), `_es_tcg_locker_shipment_id`,
+  `_es_tcg_locker_tracking_ref`, `_es_tcg_locker_booked_ts`.
+
+Margin per order = shipping-item `customer_charge` − `provider_rate`. Under **free** mode it is
+negative by the provider cost; under **fixed** it is `fixed − provider_rate`. To size the
+channel's GP, find booked orders by the **order-level** `_es_tcg_locker_booking_status = booked`,
+then read each order's **shipping-item** charge/provider-rate meta.
 
 ## Notes / assumptions
 - VAT handling assumes shipping is taxable at 15% (the ex-VAT cost is handed to WooCommerce,
