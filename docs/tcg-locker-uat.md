@@ -124,31 +124,42 @@ Do these deliberately, in order, on the live site:
 
 ## Rollback
 
-Setting **TCG Locker → Enable = off** (`tcg_locker_enabled = no`) is the primary rollback, but
-be precise about what it does and does **not** do:
+Setting **TCG Locker → Enable = off** (`tcg_locker_enabled = no`) is the primary rollback.
+`tcg_locker_enabled` is a **single gate**: the client factory (`es_tcg_locker_client()`) returns
+`null` when it is not `yes`, *before* it even looks at the stored token — so disabling turns off
+**everything the client does at once**: new quotes, the Book action, AND authenticated tracking.
+Be precise about the consequences:
 
 - **Stops NEW sales cleanly.** The checkout selector and the `_locker` rate self-gate on the
-  configured client, so with the feature disabled no new locker quotes appear and no new
-  orders can select a locker. This is instant and non-destructive.
-- **Does NOT hide the admin panel on existing orders.** The *TCG Locker Shipment* meta box
-  registers whenever an order carries the persisted `_es_tcg_locker_*` shipping-item snapshot —
-  it does **not** check `tcg_locker_enabled`. So already-quoted/booked orders still show the
-  panel. The **Book** action, however, is inert while disabled (it resolves the client and
-  fails "TCG Locker is not configured"), so no new bookings can be made.
-- **Does NOT stop the tracking poll for already-booked orders.** Booked locker orders remain
-  selected by the fulfilment poll (they match on `_es_tcg_locker_shipment_id` /
-  `booking_status = booked`, not on the enable flag). If cron keeps running for the legacy
-  carriers and the locker client is disabled/unconfigured, those locker polls **fail** and can
-  increment the per-order watchdog failure counter. **Therefore, to roll back while locker
-  orders are still in flight, LEAVE the API token configured** (disabling *Enable* alone stops
-  new sales) so tracking completes normally; only remove the token once no booked locker order
-  is still being polled (i.e. all have reached a terminal state).
-- **Credentials persist.** Disabling does not clear the stored API base/token (write-only
-  fields). Clear them explicitly if you want the client fully gone — accepting the poll-failure
-  behaviour above for any still-in-flight booked orders.
+  client, so no new locker quotes appear and no new orders can select a locker. Instant and
+  non-destructive.
+- **Book action becomes inert.** The *TCG Locker Shipment* meta box still shows on orders that
+  carry the persisted `_es_tcg_locker_*` shipping-item snapshot (the box registers on the
+  snapshot, not the enable flag), but clicking **Book** now fails "TCG Locker is not
+  configured" — so no new bookings can be made.
+- **Authenticated tracking STOPS too — and cannot be kept alive by keeping the token.** Because
+  the client is gated off by the enable flag before the token is read, retaining the token does
+  NOT keep polling working. Booked locker orders are still *selected* by the fulfilment poll
+  (they match on `_es_tcg_locker_shipment_id` / `booking_status = booked`, not the enable flag),
+  so while cron keeps running for the legacy carriers each such order hits the unconfigured-
+  client failure path and **accrues watchdog poll-failure alerts** until it reaches a terminal
+  WC status. Nothing regresses and no shipment is created — but in-flight shipments must then be
+  **tracked manually via the TCG portal**.
+- **Preferred rollback (no watchdog noise):** disable only once **no locker orders are still in
+  flight** — i.e. every booked locker order has reached a terminal status (Delivered), at which
+  point it has already dropped out of the poll. Then `Enable = off` is fully clean.
+- **Credentials persist and cannot be cleared from the UI.** Blank credential submissions
+  intentionally preserve the stored token (write-only fields), so disabling leaves the API
+  base/token in the database. There is no admin control to erase them; removal requires a direct
+  option edit outside the settings screen.
 - **Full removal:** the feature is default-disabled, so deactivating the plugin removes it
   entirely (checkout, panel, and poll). No auto-booking and no new scheduled jobs are added
   beyond the existing 15-min fulfilment poll.
+
+> Product note: because a single flag governs both offering AND tracking, there is currently no
+> way to "stop new locker sales but keep tracking in-flight shipments". If that becomes a real
+> operational need, it wants a separate offer-at-checkout gate (client/tracking on `enabled`, new
+> quotes on a second flag) — a deliberate feature change, not a rollback tweak.
 
 ## Profitability reporting notes
 
