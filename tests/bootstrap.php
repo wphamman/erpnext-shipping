@@ -18,6 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // interfaces. Only pure classes are exercised; the WP-backed transport/cache
 // impls are declared but never instantiated under test.
 require dirname( __DIR__ ) . '/includes/class-es-tcg-locker-client.php';
+require dirname( __DIR__ ) . '/includes/class-es-tcg-locker-packer.php';
 
 $GLOBALS['es_test_pass']    = 0;
 $GLOBALS['es_test_fail']    = 0;
@@ -50,6 +51,13 @@ function es_eq( $expected, $actual, $msg ) {
 	es_ok(
 		$expected === $actual,
 		$msg . ' (expected ' . var_export( $expected, true ) . ', got ' . var_export( $actual, true ) . ')'
+	);
+}
+
+function es_close( $expected, $actual, $eps, $msg ) {
+	es_ok(
+		is_numeric( $actual ) && abs( $expected - $actual ) <= $eps,
+		$msg . ' (expected ~' . $expected . ', got ' . var_export( $actual, true ) . ')'
 	);
 }
 

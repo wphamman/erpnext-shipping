@@ -28,6 +28,10 @@ define( 'ES_TCG_LOCKER_SANDBOX_BASE', 'https://sandbox.api-pudo.co.za/api/v1' );
 // both the admin settings screen and the shipping-method flow can use it.
 require_once ES_SHIPPING_PATH . 'includes/class-es-tcg-locker-client.php';
 
+// Pure TCG Locker packer (locker eligibility + smallest-box selection). No side
+// effects; not wired into checkout until Phase 3.
+require_once ES_SHIPPING_PATH . 'includes/class-es-tcg-locker-packer.php';
+
 // Declare HPOS (High-Performance Order Storage) compatibility. The plugin already
 // uses HPOS-safe order APIs (wc_get_order, $order->get_meta, feature-detected order
 // list columns); this declaration stops WooCommerce flagging it as "incompatible"
