@@ -10,6 +10,13 @@ class ES_Fulfillment_Cron {
     /** Max orders to poll per cron run (PHP timeout safety). */
     const BATCH_SIZE = 50;
 
+    /**
+     * Slots reserved for pre-shipment TCG Locker orders BEFORE the legacy fill
+     * (half the batch). Guarantees a legacy backlog cannot starve locker orders'
+     * first transition; unused reserve is reclaimed by the legacy fill / top-up.
+     */
+    const LOCKER_POLL_RESERVE = 25;
+
     /** Forward-only status order (index = priority). */
     private static $status_priority = array(
         'processing'        => 0,
@@ -75,58 +82,72 @@ class ES_Fulfillment_Cron {
             $tcg_token = $tokens['tcg'];
             $mds_token = $tokens['mds'];
 
-            if ( empty( $tcg_token ) && empty( $mds_token ) ) {
+            // Poll when ANY carrier can be reached: a legacy Courier Guy / MDS token,
+            // OR a configured TCG Locker client. TCG Locker is independently Bearer-
+            // authenticated and does NOT use the legacy tokens, so a locker-only store
+            // (both legacy tokens empty) must still poll its booked locker shipments.
+            $locker_ready = function_exists( 'es_tcg_locker_client' ) && es_tcg_locker_client();
+            if ( empty( $tcg_token ) && empty( $mds_token ) && ! $locker_ready ) {
                 $logger->warning( 'No carrier API tokens configured, skipping poll.', $ctx );
                 return;
             }
 
-            // Anti-starvation: fetch unpolled orders first, then oldest-polled.
-            // Two separate queries avoid meta_query + meta_key JOIN conflicts.
-            $unpolled = wc_get_orders( array(
-                'status'     => array( 'completed', 'partially-shipped' ),
-                'meta_query' => array(
-                    array(
-                        'key'     => '_wc_shipment_tracking_items',
-                        'compare' => 'EXISTS',
-                    ),
-                    array(
-                        'key'     => '_es_last_polled',
-                        'compare' => 'NOT EXISTS',
-                    ),
-                ),
-                'limit' => self::BATCH_SIZE,
-            ) );
-
-            $remaining = self::BATCH_SIZE - count( $unpolled );
-            $polled = array();
-            if ( $remaining > 0 ) {
-                $polled = wc_get_orders( array(
-                    'status'     => array( 'completed', 'partially-shipped' ),
-                    'meta_query' => array(
-                        array(
-                            'key'     => '_wc_shipment_tracking_items',
-                            'compare' => 'EXISTS',
-                        ),
-                        array(
-                            'key'     => '_es_last_polled',
-                            'compare' => 'EXISTS',
-                        ),
-                    ),
-                    'orderby'  => 'meta_value_num',
-                    'meta_key' => '_es_last_polled',
-                    'order'    => 'ASC',
-                    'limit'    => $remaining,
-                ) );
+            // Cross-category anti-starvation: reserve a slice of the batch for
+            // pre-shipment TCG Locker orders FIRST, so a continuous backlog of
+            // conventional completed orders can never fill all BATCH_SIZE slots and
+            // block a locker order's first processing→Shipped transition. Each
+            // category still applies unpolled-first anti-starvation internally, and
+            // any unused reserve is reclaimed by the legacy fill / the locker top-up
+            // below — so no batch capacity is wasted when one category is empty.
+            $orders = self::merge_locker_orders( array(), min( self::BATCH_SIZE, self::LOCKER_POLL_RESERVE ) );
+            $have   = array();
+            foreach ( $orders as $o ) {
+                $have[ $o->get_id() ] = true;
             }
 
-            $orders = array_merge( $unpolled, $polled );
+            // Legacy tracking-items selection fills the remaining batch: unpolled
+            // first, then oldest-polled (two queries avoid a meta_query + meta_key
+            // JOIN conflict), de-duplicated against the locker reserve.
+            $add_legacy = function ( $found ) use ( &$orders, &$have ) {
+                foreach ( $found as $o ) {
+                    $id = $o->get_id();
+                    if ( ! isset( $have[ $id ] ) ) {
+                        $orders[]    = $o;
+                        $have[ $id ] = true;
+                    }
+                }
+            };
 
-            // Phase 5: also poll BOOKED TCG Locker orders that are still pre-shipment
-            // (processing/on-hold). The tracking-items query above only selects
-            // completed/partially-shipped, so cron could otherwise never drive the
-            // first processing→Shipped transition for a locker order. Union in the
-            // meta-qualified locker set, de-duplicated and re-capped at BATCH_SIZE.
-            $orders = self::merge_locker_orders( $orders );
+            $remaining = self::BATCH_SIZE - count( $orders );
+            if ( $remaining > 0 ) {
+                $add_legacy( wc_get_orders( array(
+                    'status'     => array( 'completed', 'partially-shipped' ),
+                    'meta_query' => array(
+                        array( 'key' => '_wc_shipment_tracking_items', 'compare' => 'EXISTS' ),
+                        array( 'key' => '_es_last_polled', 'compare' => 'NOT EXISTS' ),
+                    ),
+                    'limit' => $remaining,
+                ) ) );
+            }
+            $remaining = self::BATCH_SIZE - count( $orders );
+            if ( $remaining > 0 ) {
+                $add_legacy( wc_get_orders( array(
+                    'status'     => array( 'completed', 'partially-shipped' ),
+                    'meta_query' => array(
+                        array( 'key' => '_wc_shipment_tracking_items', 'compare' => 'EXISTS' ),
+                        array( 'key' => '_es_last_polled', 'compare' => 'EXISTS' ),
+                    ),
+                    'orderby'  => 'meta_value_num',
+                    'meta_key' => '_es_last_polled', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+                    'order'    => 'ASC',
+                    'limit'    => $remaining,
+                ) ) );
+            }
+
+            // Reclaim any slots the legacy fill left unused with more locker orders
+            // (idempotent — merge_locker_orders de-duplicates), so a small legacy
+            // backlog never wastes capacity.
+            $orders = self::merge_locker_orders( $orders, self::BATCH_SIZE );
 
             if ( empty( $orders ) ) {
                 return;
@@ -275,10 +296,11 @@ class ES_Fulfillment_Cron {
      * unpolled first, then oldest-polled (two queries to avoid a meta_query + meta_key
      * JOIN conflict, mirroring the primary selection).
      *
-     * @param array $orders Orders already selected by the primary (tracking-items) query.
-     * @return array Merged, de-duplicated, BATCH_SIZE-capped order list.
+     * @param array $orders Orders already selected (deduplicated against these).
+     * @param int   $cap    Maximum total order count after merging.
+     * @return array Merged, de-duplicated, $cap-capped order list.
      */
-    private static function merge_locker_orders( $orders ) {
+    private static function merge_locker_orders( $orders, $cap ) {
         if ( ! class_exists( 'ES_TCG_Locker_Booking' ) ) {
             return $orders;
         }
@@ -296,16 +318,20 @@ class ES_Fulfillment_Cron {
             foreach ( $found as $o ) {
                 $id = $o->get_id();
                 if ( ! isset( $have[ $id ] ) ) {
-                    $orders[] = $o;
+                    $orders[]    = $o;
                     $have[ $id ] = true;
                 }
             }
         };
 
-        $remaining = self::BATCH_SIZE - count( $orders );
+        // Exclude orders already selected so the query's `limit` counts only NEW
+        // locker orders — otherwise a top-up call would fetch already-taken orders
+        // and de-dup them away, reclaiming nothing.
+        $remaining = $cap - count( $orders );
         if ( $remaining > 0 ) {
             $add( wc_get_orders( array(
                 'status'     => $statuses,
+                'exclude'    => array_map( 'intval', array_keys( $have ) ),
                 'meta_query' => array_merge( $booked, array(
                     array( 'key' => '_es_last_polled', 'compare' => 'NOT EXISTS' ),
                 ) ),
@@ -313,10 +339,11 @@ class ES_Fulfillment_Cron {
             ) ) );
         }
 
-        $remaining = self::BATCH_SIZE - count( $orders );
+        $remaining = $cap - count( $orders );
         if ( $remaining > 0 ) {
             $add( wc_get_orders( array(
                 'status'     => $statuses,
+                'exclude'    => array_map( 'intval', array_keys( $have ) ),
                 'meta_query' => array_merge( $booked, array(
                     array( 'key' => '_es_last_polled', 'compare' => 'EXISTS' ),
                 ) ),
