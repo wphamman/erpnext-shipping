@@ -92,6 +92,7 @@ class ES_TCG_Locker_Transient_Cache implements ES_TCG_Locker_Cache {
 class ES_TCG_Locker_Client {
 
 	const LOCKERS_TTL     = 86400; // 24h.
+	const RATE_TTL        = 300;   // 5 min — short L2L quote cache.
 	const DEFAULT_TIMEOUT = 15;
 
 	const OPTIN_PATH        = '/rates/opt-in';
@@ -407,6 +408,18 @@ class ES_TCG_Locker_Client {
 			return array( 'ok' => false, 'error' => 'no_destination' );
 		}
 
+		// The L2L /rates request is destination-only (collection is type=locker,
+		// not a terminal), so the available services depend only on the
+		// destination — cacheable by env + destination code. The packer selects
+		// the box locally from these offers, so the cart is not part of the key.
+		$ck = $this->cache_key( 'rate_' . md5( $dest_terminal_id ) );
+		if ( $this->cache ) {
+			$cached = $this->cache->get( $ck );
+			if ( is_array( $cached ) ) {
+				return array( 'ok' => true, 'offers' => $cached, 'cached' => true );
+			}
+		}
+
 		$body = array(
 			'collection_address' => array( 'type' => 'locker' ),
 			'delivery_address'   => array( 'terminal_id' => $dest_terminal_id ),
@@ -421,6 +434,11 @@ class ES_TCG_Locker_Client {
 		if ( null === $offers ) {
 			$this->log( 'error', self::RATES_PATH . ' unexpected response shape' );
 			return array( 'ok' => false, 'error' => 'shape' );
+		}
+
+		// Never cache an empty/error result as success (allow a later retry).
+		if ( $this->cache && ! empty( $offers ) ) {
+			$this->cache->set( $ck, $offers, self::RATE_TTL );
 		}
 		return array( 'ok' => true, 'offers' => $offers );
 	}
@@ -448,6 +466,13 @@ class ES_TCG_Locker_Client {
 			if ( '' === $code ) {
 				continue;
 			}
+			// A service with no positive numeric price is unusable — drop it so it
+			// can never be selected and priced as free shipping (fail closed).
+			$rate = self::num_or_null( $r['rate'] ?? null );
+			if ( null === $rate || $rate <= 0 ) {
+				$this->log( 'warning', self::RATES_PATH . ' dropped service ' . $code . ' with no positive rate' );
+				continue;
+			}
 			$offers[] = array(
 				'service_code'       => $code,
 				'service_name'       => (string) ( $sl['name'] ?? '' ),
@@ -455,7 +480,7 @@ class ES_TCG_Locker_Client {
 				'box_name'           => (string) ( $sl['box_type_name'] ?? '' ),  // e.g. V4-XL.
 				'box_size'           => self::derive_box_size( $sl['box_type_name'] ?? '' ),
 				'dimensions'         => $this->normalize_dims( $sl['dimensions'] ?? null ),
-				'rate'               => self::num_or_null( $r['rate'] ?? null ),
+				'rate'               => $rate,
 				'rate_excluding_vat' => self::num_or_null( $r['rate_excluding_vat'] ?? null ),
 				'rate_revision_id'   => (string) ( $r['rate_revision_id'] ?? '' ),
 			);

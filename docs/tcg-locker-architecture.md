@@ -501,6 +501,13 @@ on the order for later profitability reporting (§10).
 
 ## 6. Settings & data model
 
+**Single global configuration.** TCG Locker settings are resolved **globally** from the
+first ES shipping-method instance with `tcg_locker_enabled = yes` (deterministic by
+`option_name`, via `es_tcg_locker_settings()`). The checkout selector/search/validation and
+the `_locker` rate builder both use this same resolved instance, so credentials, environment,
+pricing, and the enable flag can never disagree between the two sides (they are not read
+per-zone). One TCG account serves all zones.
+
 ### 6.1 Global settings (WC method instance options), all default-disabled/safe
 
 | Key | Default | Notes |
@@ -596,11 +603,14 @@ Constants for these keys are defined once (Phase 1) and referenced everywhere.
 |---|---|---|
 | Locker dataset | `es_tcg_locker_data_<md5(base_url)>` | 24h |
 | Locker last-known-good | `es_tcg_locker_data_lkg_<md5(base_url)>` | none (persist) |
-| L2L quote | `es_tcg_locker_rate_<md5(base_url \| dest_code \| box_code \| packed_fingerprint)>` | short (rate timeout window / minutes) |
+| L2L quote | `es_tcg_locker_rate_<md5(base_url)>` namespace, keyed by `md5(dest_code)` (implemented as `es_tcg_locker_rate_<md5(dest)>_<md5(base_url)>`) | 300s (`RATE_TTL`) |
 
 Every key includes an environment discriminator (`base_url`) so sandbox and production data
-never collide. Quote keys include the packed-order fingerprint and destination code so a
-different cart or destination re-quotes.
+never collide. **The L2L `/rates` request is destination-only** (collection is `type: locker`,
+not a terminal), so the available services depend only on the destination — the quote cache is
+keyed by environment + destination code, **not** by the packed cart. The packer selects the
+box locally from the cached offers, so a different cart does not need a re-quote; only a
+different destination (or TTL expiry) does. Empty/error quotes are never cached.
 
 ---
 

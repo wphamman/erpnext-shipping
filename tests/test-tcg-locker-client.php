@@ -70,6 +70,35 @@ es_test( '/rates parses nested service_level; box_type is a provider ID', functi
 	es_eq( 60.0, $xl['dimensions']['length'], 'dimensions.length parsed' );
 } );
 
+es_test( '/rates drops services with no positive price (fail closed)', function () {
+	$body = '{"rates":[{"service_level":{"code":"L2LM - ECO","box_type":"12","box_type_name":"V4-M","dimensions":{}}},{"service_level":{"code":"L2LL - ECO","box_type":"13","box_type_name":"V4-L","dimensions":{}},"rate":92,"rate_excluding_vat":80,"rate_revision_id":"r"}]}';
+	$tx  = ( new ES_Fake_Transport() )->push( 200, $body );
+	$c   = new ES_TCG_Locker_Client( ES_TEST_BASE, 'T', $tx );
+	$res = $c->get_rates( 'CG929' );
+	es_eq( 1, count( $res['offers'] ), 'price-less service dropped; only the priced one remains' );
+	es_eq( 'L2LL - ECO', $res['offers'][0]['service_code'], 'the surviving offer is the priced L' );
+} );
+
+es_test( '/rates short cache: second call served from cache (no extra transport call)', function () {
+	$tx    = ( new ES_Fake_Transport() )->push( 200, es_fixture( 'rates-l2l.json' ) );
+	$cache = new ES_Array_Cache();
+	$c     = new ES_TCG_Locker_Client( ES_TEST_BASE, 'T', $tx, $cache );
+
+	$r1 = $c->get_rates( 'CG929' );
+	es_eq( 3, count( $r1['offers'] ), 'first call quotes 3 offers' );
+	es_eq( 1, count( $tx->calls ), 'one transport call' );
+
+	$r2 = $c->get_rates( 'CG929' );
+	es_eq( 3, count( $r2['offers'] ), 'second call returns cached offers' );
+	es_eq( 1, count( $tx->calls ), 'cache hit — still one transport call' );
+	es_ok( ! empty( $r2['cached'] ), 'flagged as cached' );
+
+	// A different destination is a cache miss (separate key).
+	$tx->push( 200, es_fixture( 'rates-l2l.json' ) );
+	$c->get_rates( 'PTA100' );
+	es_eq( 2, count( $tx->calls ), 'different destination → new transport call' );
+} );
+
 es_test( 'derive_box_size', function () {
 	es_eq( 'XS', ES_TCG_Locker_Client::derive_box_size( 'V4-XS' ), 'V4-XS -> XS' );
 	es_eq( 'S', ES_TCG_Locker_Client::derive_box_size( 'V4-S' ), 'V4-S -> S' );

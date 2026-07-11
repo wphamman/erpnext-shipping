@@ -25,6 +25,9 @@ class ES_TCG_Locker_Rate {
 	const M_BOX_CODE      = '_es_tcg_locker_box_code';
 	const M_BOX_NAME      = '_es_tcg_locker_box_name';
 	const M_BOX_SIZE      = '_es_tcg_locker_box_size';
+	const M_BOX_DIMS      = '_es_tcg_locker_box_dims';
+	const M_BOX_MAX_WT    = '_es_tcg_locker_box_max_weight';
+	const M_PACKED_WEIGHT = '_es_tcg_locker_packed_weight';
 	const M_PROVIDER_RATE = '_es_tcg_locker_provider_rate';
 	const M_PROVIDER_EX   = '_es_tcg_locker_provider_rate_ex_vat';
 	const M_CUSTOMER_CHG  = '_es_tcg_locker_customer_charge';
@@ -49,11 +52,17 @@ class ES_TCG_Locker_Rate {
 	 * @param float  $free_threshold TCG-Locker-specific free threshold (0 = off).
 	 * @param float  $cart_total    Cart subtotal used against the threshold.
 	 * @param float  $vat_rate      Shipping VAT rate (default 15%).
-	 * @return array [ pricing_mode, customer_charge_incl, rate_cost_ex_vat,
-	 *                 provider_rate_incl, provider_rate_ex_vat ]
+	 * @return array Success: [ ok=>true, pricing_mode, customer_charge_incl,
+	 *                 rate_cost_ex_vat, provider_rate_incl, provider_rate_ex_vat ]
+	 *               Failure (fail-closed): [ ok=>false, reason ]
 	 */
 	public static function compute_pricing( $offer, $mode, $fixed, $free_threshold, $cart_total, $vat_rate = self::VAT_RATE ) {
-		$provider_incl = isset( $offer['rate'] ) && is_numeric( $offer['rate'] ) ? (float) $offer['rate'] : 0.0;
+		// A real quote must carry a positive numeric provider rate. Missing,
+		// non-numeric, or non-positive pricing fails closed — never a free rate.
+		if ( ! isset( $offer['rate'] ) || ! is_numeric( $offer['rate'] ) || (float) $offer['rate'] <= 0 ) {
+			return array( 'ok' => false, 'reason' => 'invalid_provider_rate' );
+		}
+		$provider_incl = (float) $offer['rate'];
 		$provider_ex   = isset( $offer['rate_excluding_vat'] ) && is_numeric( $offer['rate_excluding_vat'] ) ? (float) $offer['rate_excluding_vat'] : null;
 
 		$free = ( $free_threshold > 0 && $cart_total >= $free_threshold );
@@ -62,7 +71,11 @@ class ES_TCG_Locker_Rate {
 			$target_incl = 0.0;
 			$mode_out    = 'free';
 		} elseif ( 'fixed' === $mode ) {
-			$target_incl = max( 0.0, (float) $fixed );
+			// A fixed price must be positive; 0/absent is a misconfiguration, not free.
+			if ( (float) $fixed <= 0 ) {
+				return array( 'ok' => false, 'reason' => 'invalid_fixed_price' );
+			}
+			$target_incl = (float) $fixed;
 			$mode_out    = 'fixed';
 		} else {
 			$target_incl = $provider_incl;
@@ -80,12 +93,33 @@ class ES_TCG_Locker_Rate {
 		}
 
 		return array(
+			'ok'                   => true,
 			'pricing_mode'         => $mode_out,
 			'customer_charge_incl' => round( $target_incl, 2 ),
 			'rate_cost_ex_vat'     => round( $cost_ex, 2 ),
 			'provider_rate_incl'   => round( $provider_incl, 2 ),
 			'provider_rate_ex_vat' => null === $provider_ex ? null : round( $provider_ex, 2 ),
 		);
+	}
+
+	/**
+	 * Is a cart line locker-eligible? Pure so the parent-level variation opt-out
+	 * and excluded-class rules are testable.
+	 *
+	 * @param bool   $own_ineligible    Product's own _es_locker_ineligible flag.
+	 * @param bool   $parent_ineligible Parent product's flag (variations).
+	 * @param string $shipping_class    Product shipping-class slug.
+	 * @param array  $excluded_classes  tcg_locker_excluded_shipping_classes slugs.
+	 * @return bool
+	 */
+	public static function is_line_locker_eligible( $own_ineligible, $parent_ineligible, $shipping_class, $excluded_classes ) {
+		if ( $own_ineligible || $parent_ineligible ) {
+			return false;
+		}
+		if ( is_array( $excluded_classes ) && '' !== (string) $shipping_class && in_array( $shipping_class, $excluded_classes, true ) ) {
+			return false;
+		}
+		return true;
 	}
 
 	/**
@@ -147,15 +181,17 @@ class ES_TCG_Locker_Rate {
 	 * the plain keys are shown beneath the rate. Pure — the caller supplies the
 	 * timestamp.
 	 *
-	 * @param array $locker    Validated locker record (code/name/address/lat/lng).
-	 * @param array $offer     Chosen offer from get_rates().
-	 * @param string $origin_id Persisted dispatch location id.
-	 * @param array $pricing   Output of compute_pricing().
-	 * @param int   $quote_ts  Quote timestamp.
+	 * @param array $locker        Validated locker record (code/name/address/lat/lng).
+	 * @param array $offer         Chosen offer from get_rates() (with dimensions).
+	 * @param string $origin_id    Persisted dispatch location id.
+	 * @param array $pricing       Output of compute_pricing().
+	 * @param int   $quote_ts      Quote timestamp.
+	 * @param float $packed_weight Packer total packed weight (kg).
 	 * @return array meta_data map.
 	 */
-	public static function build_rate_meta( $locker, $offer, $origin_id, $pricing, $quote_ts ) {
+	public static function build_rate_meta( $locker, $offer, $origin_id, $pricing, $quote_ts, $packed_weight = 0.0 ) {
 		$box_display = '' !== ( $offer['box_size'] ?? '' ) ? $offer['box_size'] : ( $offer['box_name'] ?? '' );
+		$dims        = is_array( $offer['dimensions'] ?? null ) ? $offer['dimensions'] : array();
 
 		$meta = array(
 			// Customer-visible.
@@ -171,6 +207,8 @@ class ES_TCG_Locker_Rate {
 			self::M_BOX_CODE      => (string) ( $offer['box_code'] ?? '' ),
 			self::M_BOX_NAME      => (string) ( $offer['box_name'] ?? '' ),
 			self::M_BOX_SIZE      => (string) ( $offer['box_size'] ?? '' ),
+			self::M_BOX_DIMS      => self::format_dims( $dims ),
+			self::M_PACKED_WEIGHT => (string) round( (float) $packed_weight, 3 ),
 			self::M_PROVIDER_RATE => (string) $pricing['provider_rate_incl'],
 			self::M_CUSTOMER_CHG  => (string) $pricing['customer_charge_incl'],
 			self::M_REVISION_ID   => (string) ( $offer['rate_revision_id'] ?? '' ),
@@ -178,6 +216,9 @@ class ES_TCG_Locker_Rate {
 			self::M_PRICING_MODE  => (string) $pricing['pricing_mode'],
 		);
 
+		if ( isset( $dims['max_weight'] ) && null !== $dims['max_weight'] ) {
+			$meta[ self::M_BOX_MAX_WT ] = (string) $dims['max_weight'];
+		}
 		if ( null !== $pricing['provider_rate_ex_vat'] ) {
 			$meta[ self::M_PROVIDER_EX ] = (string) $pricing['provider_rate_ex_vat'];
 		}
@@ -189,5 +230,16 @@ class ES_TCG_Locker_Rate {
 		}
 
 		return $meta;
+	}
+
+	/** "LxWxH" from a normalised dimensions array, or '' when incomplete. */
+	private static function format_dims( $dims ) {
+		$l = $dims['length'] ?? null;
+		$w = $dims['width'] ?? null;
+		$h = $dims['height'] ?? null;
+		if ( null === $l || null === $w || null === $h ) {
+			return '';
+		}
+		return $l . 'x' . $w . 'x' . $h;
 	}
 }
