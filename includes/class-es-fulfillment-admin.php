@@ -203,6 +203,77 @@ class ES_Fulfillment_Admin {
     }
 
     /**
+     * Public single-order accessor for the ERP-sync state (marker + title), so
+     * other admin surfaces (e.g. the order-edit metabox) can show an authoritative
+     * "is this order actually in ERPNext right now?" indicator — instead of
+     * trusting a stale force-sync note.
+     *
+     * Site-scoped: matches the exact site-prefixed Sales Order name (e.g.
+     * `WEB1-030370`), NOT a bare numeric `woocommerce_id`. Retail (`WEB1-`) and
+     * wholesale (`WEB3-`) share one ERPNext and their order IDs can overlap, so an
+     * id-only lookup could return the other site's order. Uses its own
+     * `es_sync_state_so_{id}` transient (not the id-keyed orders-list column cache)
+     * so an id-scoped list result can never poison this panel. Cold cache = one
+     * scoped ERP GET (5s); ERPNext-unreachable is cached briefly (1 min) to re-check
+     * soon. (The batched orders-list column remains id-scoped — a pre-existing
+     * latent multi-site collision tracked separately from this accessor.)
+     *
+     * NOTE: "✓ Synced" here means the Sales Order exists AND its woocommerce_status
+     * maps to the WC status — the same (status-level, not field-level) definition
+     * the orders-list column has always used. It does NOT assert that items/prices/
+     * addresses match. Callers that just wrote an indeterminate "verify" note should
+     * read this as "present + status-aligned", not "every field is in sync".
+     *
+     * @param int $order_id
+     * @return array{marker:string,title:string}
+     */
+    public static function get_sync_state( $order_id ) {
+        $order_id  = intval( $order_id );
+        $cache_key = 'es_sync_state_so_' . $order_id;
+        $state     = get_transient( $cache_key );
+        if ( is_array( $state ) ) {
+            return $state;
+        }
+
+        $so_name = ( class_exists( 'ES_Order_Actions' ) && method_exists( 'ES_Order_Actions', 'derive_so_name' ) )
+            ? ES_Order_Actions::derive_so_name( $order_id )
+            : '';
+        if ( '' === $so_name ) {
+            // Can't resolve the site-prefixed name → don't guess against a bare id.
+            return array( 'marker' => '—', 'title' => 'Sales Order name unresolved' );
+        }
+
+        $client = class_exists( 'ES_ERPNext_Client' ) ? ES_ERPNext_Client::from_settings( 5 ) : null;
+        if ( ! $client ) {
+            $state = array( 'marker' => '—', 'title' => 'ERPNext not configured' );
+            set_transient( $cache_key, $state, 5 * MINUTE_IN_SECONDS );
+            return $state;
+        }
+
+        $body = $client->get( '/api/resource/Sales Order', array(
+            'fields'            => wp_json_encode( array( 'name', 'woocommerce_status', 'modified' ) ),
+            'filters'           => wp_json_encode( array(
+                array( 'name', '=', (string) $so_name ),
+            ) ),
+            'limit_page_length' => 1,
+        ) );
+
+        if ( is_wp_error( $body ) ) {
+            $state = array( 'marker' => '—', 'title' => 'ERPNext unreachable: ' . $body->get_error_message() );
+            set_transient( $cache_key, $state, MINUTE_IN_SECONDS );
+            return $state;
+        }
+
+        $so = ( isset( $body['data'][0] ) && is_array( $body['data'][0] ) ) ? $body['data'][0] : null;
+
+        $state = $so
+            ? self::evaluate_sync_state( $order_id, $so )
+            : array( 'marker' => '✗', 'title' => 'No Sales Order found in ERPNext' );
+        set_transient( $cache_key, $state, 5 * MINUTE_IN_SECONDS );
+        return $state;
+    }
+
+    /**
      * Batched lookup: query ERPNext once for all visible orders' Sales Orders,
      * stash each result in a per-order transient (5-min TTL), then return the
      * one the caller asked for.

@@ -25,6 +25,11 @@ class ES_Order_Actions {
     const BULK_REPOLL_LIMIT = 25;
     /** Sleep between per-order polls during bulk action (microseconds). */
     const BULK_REPOLL_SLEEP_US = 200000; // 200ms
+    /** Only run the post-failure SO-existence confirmation if the sync POST
+     *  returned within this many seconds — leaves headroom for the extra 5s GET
+     *  under a host's hard ~30s PHP cap (worst case ~15s POST + 5s GET). A slow
+     *  error is treated like a timeout: log immediately, don't risk being killed. */
+    const FORCE_SYNC_CONFIRM_MAX_ELAPSED = 15.0;
 
     public static function init() {
         // Meta box on order edit screen — HPOS-aware screen selection.
@@ -88,6 +93,26 @@ class ES_Order_Actions {
             <strong><?php esc_html_e( 'Sales Order:', 'erpnext-shipping' ); ?></strong>
             <code><?php echo esc_html( $so_name ); ?></code>
         </p>
+        <?php
+        // Authoritative live ERP-sync state (does this order actually exist in
+        // ERPNext right now?), reusing the same check as the orders-list column.
+        // This means a stale "sync failed" note from an earlier Force-Sync can no
+        // longer mislead — the panel always reflects current ERP reality. Shares
+        // the list column's 5-min transient, so a warm cache costs nothing.
+        if ( class_exists( 'ES_Fulfillment_Admin' ) && method_exists( 'ES_Fulfillment_Admin', 'get_sync_state' ) ) :
+            $sync = ES_Fulfillment_Admin::get_sync_state( $order_id );
+            if ( is_array( $sync ) ) :
+                ?>
+                <p style="margin-top:0;">
+                    <strong><?php esc_html_e( 'ERP sync:', 'erpnext-shipping' ); ?></strong>
+                    <span title="<?php echo esc_attr( $sync['title'] ?? '' ); ?>"><?php
+                        echo esc_html( trim( ( $sync['marker'] ?? '—' ) . ' ' . ( $sync['title'] ?? '' ) ) );
+                    ?></span>
+                </p>
+                <?php
+            endif;
+        endif;
+        ?>
         <?php if ( $erp_link ) : ?>
             <p>
                 <a href="<?php echo esc_url( $erp_link ); ?>" target="_blank" rel="noopener" class="button button-secondary" style="width:100%;text-align:center;">
@@ -502,52 +527,127 @@ class ES_Order_Actions {
             return;
         }
 
-        $so_name = self::derive_so_name( $order_id );
-        $result  = $client->post(
+        $so_name    = self::derive_so_name( $order_id );
+        $started_at = microtime( true );
+        $result     = $client->post(
             '/api/method/woocommerce_fusion.tasks.sync_sales_orders.run_sales_order_sync',
             array( 'sales_order_name' => $so_name )
         );
-        delete_transient( $lock_key );
+        $elapsed = microtime( true ) - $started_at;
 
-        if ( is_wp_error( $result ) ) {
-            $err = $result->get_error_message();
+        // Hold the per-order lock through confirmation AND result logging — not
+        // just the POST — so a second click/worker cannot start a competing sync
+        // during the extra confirmation GET and race the note/meta writes (older
+        // job overwriting the newer job's outcome). `finally` guarantees release
+        // even if logging throws; the 300s lock TTL is only a backstop.
+        try {
+            $is_error = is_wp_error( $result );
+            $err      = $is_error ? $result->get_error_message() : '';
             // A WP-side timeout does NOT mean ERPNext failed — once the request is
             // received, the Fusion sync usually completes there regardless.
-            $timed_out = ( false !== stripos( $err, 'timed out' ) || false !== stripos( $err, 'cURL error 28' ) );
-            if ( $timed_out ) {
-                self::log_force_sync_result(
-                    $order_id,
-                    null,
-                    sprintf(
-                        /* translators: %s = Sales Order name */
-                        __( 'ERPNext sync request sent for %s, but the response timed out — verify the Sales Order in ERPNext.', 'erpnext-shipping' ),
-                        $so_name
-                    )
-                );
-            } else {
-                self::log_force_sync_result(
-                    $order_id,
-                    false,
-                    sprintf(
-                        /* translators: 1: Sales Order name, 2: error message */
-                        __( 'ERPNext sync failed for %1$s: %2$s', 'erpnext-shipping' ),
-                        $so_name,
-                        $err
-                    )
-                );
-            }
-            return;
-        }
+            $timed_out = $is_error && ( false !== stripos( $err, 'timed out' ) || false !== stripos( $err, 'cURL error 28' ) );
 
-        self::log_force_sync_result(
-            $order_id,
-            true,
-            sprintf(
+            // On a FAST failure (e.g. a 404/500 returned quickly, or Fusion's
+            // concurrent-modification race), a Sales Order for this order may already
+            // be present — in which case a bare "sync failed" note is misleading.
+            // Confirm existence with a SHORT-timeout client so this can never push the
+            // worker past the host's hard ~30s PHP limit. We gate on BOTH the timeout
+            // flag AND the measured elapsed time: a slow error (POST that dawdled near
+            // its 25s cap before failing) has no budget left for the extra GET, so we
+            // skip it and log the failure immediately rather than risk PHP killing the
+            // worker before it records any outcome. Existence only downgrades the
+            // failure to an indeterminate "verify" note, NEVER to an unconditional
+            // success — a present SO does not prove THIS force-sync's changes landed.
+            $so_exists = false;
+            if ( $is_error && ! $timed_out && $elapsed < self::FORCE_SYNC_CONFIRM_MAX_ELAPSED ) {
+                $confirm_client = ES_ERPNext_Client::from_settings( 5 );
+                $so_exists      = $confirm_client ? self::so_exists_for_order( $confirm_client, $so_name ) : false;
+            }
+
+            $outcome = self::decide_force_sync_outcome( $is_error, $timed_out, $so_exists, $so_name, $err );
+            self::log_force_sync_result( $order_id, $outcome['ok'], $outcome['message'] );
+
+            // This order's ERP-sync state may have just changed — drop both indicator
+            // caches (the id-keyed orders-list column and the name-scoped metabox
+            // accessor) so they re-check against ERPNext on next render instead of
+            // showing a stale marker for up to 5 minutes.
+            delete_transient( 'es_sync_state_' . $order_id );
+            delete_transient( 'es_sync_state_so_' . $order_id );
+        } finally {
+            delete_transient( $lock_key );
+        }
+    }
+
+    /**
+     * Decide the force-sync outcome (status + human note) from the ERP call
+     * result and a confirmation of whether a Sales Order for the order exists.
+     * Pure — touches only i18n/sprintf — so it is directly unit-testable.
+     *
+     * Note: a present Sales Order after an errored request is INDETERMINATE, not
+     * success — existence proves the order is in ERPNext, not that THIS force-sync's
+     * requested changes landed (the POST may have failed mid-update). We therefore
+     * flag it for verification (ok=null) rather than claim success (ok=true).
+     *
+     * @param bool   $is_error  The sync POST returned a WP_Error.
+     * @param bool   $timed_out The error looked like a WP-side timeout.
+     * @param bool   $so_exists A Sales Order for this order was confirmed in ERPNext.
+     * @param string $so_name   Derived Sales Order name (for the message).
+     * @param string $err       Error message (for the note).
+     * @return array{ok: bool|null, message: string} ok: true=success, false=failure, null=indeterminate/verify.
+     */
+    public static function decide_force_sync_outcome( $is_error, $timed_out, $so_exists, $so_name, $err = '' ) {
+        if ( ! $is_error ) {
+            return array(
+                'ok'      => true,
                 /* translators: %s = Sales Order name */
-                __( 'ERPNext sync completed for %s.', 'erpnext-shipping' ),
-                $so_name
-            )
+                'message' => sprintf( __( 'ERPNext sync completed for %s.', 'erpnext-shipping' ), $so_name ),
+            );
+        }
+        if ( $so_exists ) {
+            return array(
+                'ok'      => null,
+                /* translators: 1: Sales Order name, 2: error message */
+                'message' => sprintf( __( 'ERPNext sync reported an error for %1$s (%2$s), but a matching Sales Order exists — verify it reflects the latest order changes.', 'erpnext-shipping' ), $so_name, $err ),
+            );
+        }
+        if ( $timed_out ) {
+            return array(
+                'ok'      => null,
+                /* translators: %s = Sales Order name */
+                'message' => sprintf( __( 'ERPNext sync request sent for %s, but the response timed out — verify the Sales Order in ERPNext.', 'erpnext-shipping' ), $so_name ),
+            );
+        }
+        return array(
+            'ok'      => false,
+            /* translators: 1: Sales Order name, 2: error message */
+            'message' => sprintf( __( 'ERPNext sync failed for %1$s: %2$s', 'erpnext-shipping' ), $so_name, $err ),
         );
+    }
+
+    /**
+     * Confirm whether THIS order's Sales Order exists in ERPNext, matched on the
+     * exact site-prefixed SO `name` (e.g. `WEB1-030370`). Matching by name — not a
+     * bare `woocommerce_id` — keeps the lookup scoped to the current WooCommerce
+     * site: retail (`WEB1-`) and wholesale (`WEB3-`) share one ERPNext and their
+     * numeric order IDs can overlap, so an id-only filter could match the OTHER
+     * site's order and wrongly downgrade a genuine failure. The name is the same
+     * one we asked Fusion to sync, so a correct POST target is a correct check.
+     * Any error / unreachable ERP conservatively returns false so the caller keeps
+     * its failure note rather than masking a real problem.
+     *
+     * @param ES_ERPNext_Client $client
+     * @param string            $so_name Site-prefixed Sales Order name.
+     * @return bool
+     */
+    private static function so_exists_for_order( $client, $so_name ) {
+        $body = $client->get( '/api/resource/Sales Order', array(
+            'fields'            => wp_json_encode( array( 'name' ) ),
+            'filters'           => wp_json_encode( array(
+                array( 'name', '=', (string) $so_name ),
+            ) ),
+            'limit_page_length' => 1,
+        ) );
+        return ! is_wp_error( $body ) && ! empty( $body['data'] ) && is_array( $body['data'] );
     }
 
     /**

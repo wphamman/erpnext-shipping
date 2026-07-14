@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.14.2] - 2026-07-14
+
+### Added
+- **The order “ERPNext” box shows a live ERP-sync indicator.** Alongside the Sales Order name, the order-edit panel now displays whether the order actually exists in ERPNext right now (Synced / Drift / Missing / Unreachable), using the same authoritative check as the orders-list ERP Sync column. A stale “sync failed” note left by an earlier Force-Sync can no longer mislead staff about the true state.
+
+### Fixed
+- **Force ERPNext Sync no longer records a bare failure when a Sales Order is actually present.** On a fast sync error (e.g. Fusion’s concurrent-modification `TimestampMismatchError`), the plugin now confirms — with a short, worker-budget-safe request — whether a Sales Order for the order exists before writing the note. A present order is flagged for verification (“…verify it reflects the latest order changes”), **not** claimed as an outright success (existence does not prove the change landed) and not shown as a hard failure. The timeout path keeps its existing “sent — verify” wording untouched, and completing a Force-Sync clears the cached ERP-sync indicator so the order screen re-checks ERPNext immediately.
+
 ## [1.14.1] - 2026-07-11
 
 ### Fixed
