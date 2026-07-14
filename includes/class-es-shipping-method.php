@@ -931,8 +931,10 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             return false;
         }
 
-        // Choose the smallest fitting box among the RETURNED services.
-        $pick = ES_TCG_Locker_Packer::select_smallest( $req, $quote['offers'] );
+        // Choose the smallest fitting box among the RETURNED services. The
+        // multi-item usable-volume fraction is operator-configurable.
+        $ff   = ES_TCG_Locker_Packer::sane_fill_factor( $opts['tcg_locker_fill_factor'] ?? null );
+        $pick = ES_TCG_Locker_Packer::select_smallest( $req, $quote['offers'], $ff );
         if ( empty( $pick['ok'] ) ) {
             $this->log( 'TCG Locker: no returned service fits the order (' . ( $pick['reason'] ?? 'unknown' ) . ').' );
             return false;

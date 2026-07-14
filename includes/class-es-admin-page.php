@@ -195,7 +195,7 @@ class ES_Admin_Page {
             'bulk_delivery_max_distance_km', 'bulk_delivery_default_distance_km',
             'bulk_delivery_round_trip_multiplier',
             'tcg_locker_fixed_customer_price', 'tcg_locker_free_shipping_threshold',
-            'tcg_locker_rate_timeout',
+            'tcg_locker_rate_timeout', 'tcg_locker_fill_factor',
         );
         foreach ( $number_fields as $key ) {
             if ( isset( $_POST[ $key ] ) ) {
@@ -308,6 +308,15 @@ class ES_Admin_Page {
         }
 
         update_option( $this->option_key, $opts );
+
+        // A settings change (fill factor, thresholds, markup, carriers, …) can alter
+        // quoted rates and locker eligibility. Bump WooCommerce's shipping cache
+        // version so an in-flight checkout session cannot keep a now-stale cached
+        // rate — e.g. a locker rate that a freshly-lowered fill factor would exclude
+        // (which booking would then refuse).
+        if ( class_exists( 'WC_Cache_Helper' ) ) {
+            WC_Cache_Helper::get_transient_version( 'shipping', true );
+        }
         return true;
     }
 
@@ -502,6 +511,7 @@ class ES_Admin_Page {
                     <?php $this->render_number_row( 'tcg_locker_free_shipping_threshold', __( 'Free Above (R)', 'erpnext-shipping' ), $v( 'tcg_locker_free_shipping_threshold', '0' ), __( 'TCG-Locker-specific free threshold. 0 = disabled. Independent of the doorstep free-shipping threshold.', 'erpnext-shipping' ) ); ?>
                     <?php $this->render_text_row( 'tcg_locker_excluded_shipping_classes', __( 'Excluded Shipping Classes', 'erpnext-shipping' ), $v( 'tcg_locker_excluded_shipping_classes', '' ) ); ?>
                     <?php $this->render_number_row( 'tcg_locker_rate_timeout', __( 'API Timeout (seconds)', 'erpnext-shipping' ), $v( 'tcg_locker_rate_timeout', '15' ) ); ?>
+                    <?php $this->render_number_row( 'tcg_locker_fill_factor', __( 'Multi-item Fill Factor', 'erpnext-shipping' ), $v( 'tcg_locker_fill_factor', '0.70' ), __( 'Usable fraction (0–1) of a locker box for orders of 2+ items — allows for real-world packing air-gaps. Lower is more conservative (fewer multi-item orders are offered a locker). Single-item orders are unaffected. Default 0.70.', 'erpnext-shipping' ) ); ?>
                 </table>
 
                 <!-- Pricing -->

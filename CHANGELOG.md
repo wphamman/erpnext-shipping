@@ -4,7 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [1.14.2] - 2026-07-14
+## [1.14.3] - 2026-07-14
+
+### Added
+- **Configurable TCG Locker multi-item fill factor.** A new *Multi-item Fill Factor* setting (ERPNext Shipping → TCG Locker, default **0.70**) controls the usable fraction of a locker box the packer assumes for orders of 2+ items, so real-world packing air-gaps can be tuned without a release. Lower = more conservative (fewer multi-item orders offered a locker). Single-item orders are unaffected (a lone item that fits dimensionally still fits). Invalid values fall back to 0.70. Previously hard-coded at 0.80.
 
 ### Added
 - **The order “ERPNext” box shows a live ERP-sync indicator.** Alongside the Sales Order name, the order-edit panel now displays whether the order actually exists in ERPNext right now (Synced / Drift / Missing / Unreachable), using the same authoritative check as the orders-list ERP Sync column. A stale “sync failed” note left by an earlier Force-Sync can no longer mislead staff about the true state.

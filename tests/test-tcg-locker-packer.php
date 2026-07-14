@@ -182,6 +182,21 @@ es_test( 'spatial coexistence — two 20³ cubes DO fit (packable control, not o
 	es_ok( ES_TCG_Locker_Packer::fits_box( $req, $m ), 'two 20×20×15 items coexist in M' );
 } );
 
+es_test( 'configurable fill factor — 6× 20×20×15 fits M at 0.80 but not at 0.70', function () {
+	// Cumulative volume 36,000 cm³ sits between 0.70×M (32,718) and 0.80×M (37,392),
+	// and the 6 units pack 3×2×1 in M (60×41×19). So the multi-item order IS offered a
+	// locker at the default 0.80 fill factor but correctly withheld at a tighter 0.70.
+	$req = ES_TCG_Locker_Packer::compute_requirements( array( es_line( 6, 1, 20, 20, 15 ) ) );
+	$m   = ES_TCG_Locker_Packer::STATIC_BOXES['M'];
+	es_ok( ES_TCG_Locker_Packer::fits_box( $req, $m, 0.80 ), 'fits at 0.80 fill factor' );
+	es_ok( ! ES_TCG_Locker_Packer::fits_box( $req, $m, 0.70 ), 'withheld at tighter 0.70 fill factor' );
+	// Sanitiser clamps operator input to (0,1], else falls back to 0.70.
+	es_eq( 0.65, ES_TCG_Locker_Packer::sane_fill_factor( '0.65' ), 'valid string passes through' );
+	es_eq( 0.70, ES_TCG_Locker_Packer::sane_fill_factor( 'abc' ), 'non-numeric → default 0.70' );
+	es_eq( 0.70, ES_TCG_Locker_Packer::sane_fill_factor( 1.5 ), 'out-of-range → default 0.70' );
+	es_eq( 0.70, ES_TCG_Locker_Packer::sane_fill_factor( 0 ), 'zero → default 0.70' );
+} );
+
 es_test( 'over the placement unit cap → conservative reject', function () {
 	// 200 tiny units exceed MAX_PLACEMENT_UNITS; a fit cannot be demonstrated cheaply.
 	$req = ES_TCG_Locker_Packer::compute_requirements( array( es_line( 200, 0.001, 1, 1, 1 ) ) );

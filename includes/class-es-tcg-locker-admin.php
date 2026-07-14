@@ -498,7 +498,8 @@ class ES_TCG_Locker_Admin {
 		if ( empty( $req['ok'] ) ) {
 			return 'not_packable';
 		}
-		if ( ! ES_TCG_Locker_Packer::fits_box( $req, self::persisted_box( $snap ) ) ) {
+		$ff = ES_TCG_Locker_Packer::sane_fill_factor( ( (array) $opts )['tcg_locker_fill_factor'] ?? null );
+		if ( ! ES_TCG_Locker_Packer::fits_box( $req, self::persisted_box( $snap ), $ff ) ) {
 			return 'exceeds_box';
 		}
 		return '';

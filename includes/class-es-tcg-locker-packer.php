@@ -30,11 +30,14 @@ defined( 'ABSPATH' ) || exit;
 class ES_TCG_Locker_Packer {
 
 	/**
-	 * Conservative usable fraction of a box's gross volume, applied to the
-	 * CUMULATIVE item volume when there is more than one unit. This is a cheap
-	 * NECESSARY pre-filter; the constructive placement below is the SUFFICIENT
-	 * check. A single unit whose dimensions already fit the box is authoritative
-	 * and is not penalised by this factor.
+	 * Default usable fraction of a box's gross volume, applied to the CUMULATIVE
+	 * item volume when there is more than one unit — a cheap NECESSARY pre-filter
+	 * (the constructive placement below is the SUFFICIENT check). A single unit
+	 * whose dimensions already fit the box is authoritative and is not penalised.
+	 *
+	 * This constant is the fallback used when no factor is supplied. The live
+	 * rate/booking path passes a per-store configurable value (WC setting
+	 * `tcg_locker_fill_factor`, default 0.70) via sane_fill_factor().
 	 */
 	const FILL_FACTOR = 0.80;
 
@@ -59,6 +62,25 @@ class ES_TCG_Locker_Packer {
 	);
 
 	const EPS = 1e-9;
+
+	/**
+	 * Clamp a (possibly operator-entered) fill factor to a usable fraction in
+	 * (0, 1]. Any non-numeric or out-of-range value falls back to $default. Pure —
+	 * the packer never reads WP settings itself; callers pass the resolved value.
+	 *
+	 * @param mixed $value   Raw setting value (string/float/null).
+	 * @param float $default Fallback when $value is unusable (live default 0.70).
+	 * @return float
+	 */
+	public static function sane_fill_factor( $value, $default = 0.70 ) {
+		if ( is_numeric( $value ) ) {
+			$f = (float) $value;
+			if ( $f > 0 && $f <= 1 ) {
+				return $f;
+			}
+		}
+		return (float) $default;
+	}
 
 	/**
 	 * Box-independent: compute the packed-order profile from cart lines. Runs
@@ -164,9 +186,11 @@ class ES_TCG_Locker_Packer {
 	 * @param array $requirements Output of compute_requirements().
 	 * @param array $box [ 'length','width','height','max_weight' ]. Null/
 	 *                    non-positive box data fails closed (never optimistic).
+	 * @param float $fill_factor Usable-volume fraction for the multi-unit pre-filter
+	 *                    (see FILL_FACTOR). Invalid values fall back to the default.
 	 * @return bool
 	 */
-	public static function fits_box( $requirements, $box ) {
+	public static function fits_box( $requirements, $box, $fill_factor = self::FILL_FACTOR ) {
 		if ( empty( $requirements['ok'] ) ) {
 			return false;
 		}
@@ -209,8 +233,9 @@ class ES_TCG_Locker_Packer {
 			return $requirements['total_volume'] <= $box_volume + self::EPS;
 		}
 
-		// Multi-unit — cheap NECESSARY volume pre-filter (conservative fill factor).
-		if ( $requirements['total_volume'] > $box_volume * self::FILL_FACTOR + self::EPS ) {
+		// Multi-unit — cheap NECESSARY volume pre-filter (configurable fill factor).
+		$ff = self::sane_fill_factor( $fill_factor, self::FILL_FACTOR );
+		if ( $requirements['total_volume'] > $box_volume * $ff + self::EPS ) {
 			return false;
 		}
 
@@ -231,11 +256,12 @@ class ES_TCG_Locker_Packer {
 	 * @param array $offers Array of offers, each with a 'dimensions' box
 	 *                      (length/width/height/max_weight). Extra keys
 	 *                      (service_code, box_code, rate, …) are preserved.
+	 * @param float $fill_factor Multi-unit usable-volume fraction (see fits_box).
 	 * @return array [ 'ok'=>true, 'offer'=>array ]
 	 *               | [ 'ok'=>false, 'reason'=>string ]
 	 *               ('no_box_fits', 'no_services', or the compute reason).
 	 */
-	public static function select_smallest( $requirements, $offers ) {
+	public static function select_smallest( $requirements, $offers, $fill_factor = self::FILL_FACTOR ) {
 		if ( empty( $requirements['ok'] ) ) {
 			return array( 'ok' => false, 'reason' => $requirements['reason'] ?? 'ineligible' );
 		}
@@ -248,7 +274,7 @@ class ES_TCG_Locker_Packer {
 		foreach ( $offers as $offer ) {
 			$box = ( is_array( $offer ) && isset( $offer['dimensions'] ) && is_array( $offer['dimensions'] ) )
 				? $offer['dimensions'] : array();
-			if ( ! self::fits_box( $requirements, $box ) ) {
+			if ( ! self::fits_box( $requirements, $box, $fill_factor ) ) {
 				continue;
 			}
 			$vol = (float) $box['length'] * (float) $box['width'] * (float) $box['height'];
