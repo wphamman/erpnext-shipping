@@ -960,7 +960,20 @@ class ES_Shipping_Method extends WC_Shipping_Method {
             $label .= ' — ' . $locker['name'];
         }
 
-        $meta = ES_TCG_Locker_Rate::build_rate_meta( $locker, $offer, $origin_id, $pricing, time(), $req['total_weight'] );
+        // Snapshot the collection window promised to THIS customer, so retuning the
+        // setting later cannot move a deadline an existing order was sold on.
+        //
+        // Resolved GLOBALLY (no $opts), deliberately: the checkout selector renders
+        // its collection notice from the same global helper and has no instance
+        // context to work from. Reading this instance's $opts here would let a
+        // multi-instance store show one window at checkout and compute the email's
+        // deadline from another — the exact disagreement this snapshot exists to
+        // prevent. TCG Locker is already a global, first-enabled-instance feature
+        // (see es_tcg_locker_settings()), so global is also the consistent read.
+        $meta = ES_TCG_Locker_Rate::build_rate_meta(
+            $locker, $offer, $origin_id, $pricing, time(), $req['total_weight'],
+            es_tcg_locker_collection_hours()
+        );
 
         if ( ! $this->add_tax_inclusive_rate( array(
             'id'        => $this->id . '_locker',

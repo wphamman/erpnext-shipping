@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ERPNext Shipping for WooCommerce
  * Description: Real-time multi-carrier shipping rates with ERPNext stock-based warehouse routing.
- * Version: 1.14.3
+ * Version: 1.15.0
  * Author: ERPNext Shipping Contributors
  * Requires Plugins: woocommerce
  * Requires at least: 6.0
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ES_SHIPPING_VERSION', '1.14.3' );
+define( 'ES_SHIPPING_VERSION', '1.15.0' );
 define( 'ES_SHIPPING_PATH', plugin_dir_path( __FILE__ ) );
 
 // TCG Locker (PUDO) — sandbox API base default. Origin is derived by stripping
@@ -143,6 +143,27 @@ function es_tcg_locker_settings() {
 }
 
 /**
+ * The operator-set locker collection window, in hours (default 36).
+ *
+ * How long a parcel stays in the destination locker before TCG removes/returns it.
+ * A setting rather than a constant so the promise can be retuned against real
+ * provider behaviour without a release — and it is the SAME number shown at
+ * checkout and used to compute the deadline in the arrival email, so the two can
+ * never disagree.
+ *
+ * @param array|null $opts Optional pre-read settings (avoids a DB read).
+ * @return float Hours, always sane (see ES_TCG_Locker_Tracking::sane_collection_hours).
+ */
+function es_tcg_locker_collection_hours( $opts = null ) {
+    if ( null === $opts ) {
+        $opts = es_tcg_locker_settings();
+    }
+    return ES_TCG_Locker_Tracking::sane_collection_hours(
+        ( (array) $opts )['tcg_locker_collection_hours'] ?? null
+    );
+}
+
+/**
  * Construct a configured TCG Locker client, or null when the feature is disabled
  * or not validly configured. Default-disabled: returns null unless
  * tcg_locker_enabled === 'yes' with a valid API base and a token.
@@ -255,6 +276,7 @@ add_filter( 'woocommerce_email_classes', function ( $emails ) {
     require_once ES_SHIPPING_PATH . 'includes/class-es-email-ready-pickup.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-email-picked-up.php';
     require_once ES_SHIPPING_PATH . 'includes/class-es-email-pickup-reminder.php';
+    require_once ES_SHIPPING_PATH . 'includes/class-es-email-locker-arrived.php';
 
     $emails['ES_Email_Partially_Shipped']  = new ES_Email_Partially_Shipped();
     $emails['ES_Email_Order_Delivered']    = new ES_Email_Order_Delivered();
@@ -263,6 +285,7 @@ add_filter( 'woocommerce_email_classes', function ( $emails ) {
     $emails['ES_Email_Ready_Pickup']      = new ES_Email_Ready_Pickup();
     $emails['ES_Email_Picked_Up']         = new ES_Email_Picked_Up();
     $emails['ES_Email_Pickup_Reminder']   = new ES_Email_Pickup_Reminder();
+    $emails['ES_Email_Locker_Arrived']    = new ES_Email_Locker_Arrived();
 
     return $emails;
 } );

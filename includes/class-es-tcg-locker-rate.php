@@ -28,6 +28,10 @@ class ES_TCG_Locker_Rate {
 	const M_BOX_DIMS      = '_es_tcg_locker_box_dims';
 	const M_BOX_MAX_WT    = '_es_tcg_locker_box_max_weight';
 	const M_PACKED_WEIGHT = '_es_tcg_locker_packed_weight';
+	// Collection window (hours) PROMISED TO THIS CUSTOMER AT CHECKOUT. Snapshotted
+	// like every other quote fact so that retuning the setting later can never
+	// change the deadline an existing order was sold on.
+	const M_COLLECT_HOURS = '_es_tcg_locker_collection_hours';
 	const M_PROVIDER_RATE = '_es_tcg_locker_provider_rate';
 	const M_PROVIDER_EX   = '_es_tcg_locker_provider_rate_ex_vat';
 	const M_CUSTOMER_CHG  = '_es_tcg_locker_customer_charge';
@@ -196,6 +200,64 @@ class ES_TCG_Locker_Rate {
 	}
 
 	/**
+	 * Read the persisted locker quote snapshot off an order's shipping line.
+	 *
+	 * Lives here rather than in ES_TCG_Locker_Admin because that class is only
+	 * loaded behind is_admin(), and the tracking poll (WP-Cron) plus the arrival
+	 * email need this outside any admin request. ES_TCG_Locker_Admin::
+	 * read_order_locker_meta() delegates here, so there is one implementation.
+	 *
+	 * HPOS-safe: iterates the order's shipping line items and returns the meta of
+	 * the one carrying a persisted service code (WooCommerce copies all `_locker`
+	 * rate meta_data onto the shipping item at order creation). Returns null when
+	 * the order was not shipped via TCG Locker.
+	 *
+	 * @param WC_Order $order
+	 * @return array|null Map of ES_TCG_Locker_Rate::M_* keys → string values.
+	 */
+	public static function read_order_snapshot( $order ) {
+		if ( ! $order || ! is_callable( array( $order, 'get_items' ) ) ) {
+			return null;
+		}
+		foreach ( $order->get_items( 'shipping' ) as $item ) {
+			$svc = (string) $item->get_meta( self::M_SERVICE_CODE, true );
+			if ( '' === $svc ) {
+				continue;
+			}
+			$keys = array(
+				self::M_DEST_CODE,
+				self::M_DEST_NAME,
+				self::M_DEST_ADDRESS,
+				self::M_DISPATCH_LOC,
+				self::M_SERVICE_CODE,
+				self::M_SERVICE_NAME,
+				self::M_BOX_CODE,
+				self::M_BOX_NAME,
+				self::M_BOX_SIZE,
+				self::M_BOX_DIMS,
+				self::M_BOX_MAX_WT,
+				self::M_PACKED_WEIGHT,
+				self::M_PROVIDER_RATE,
+				self::M_PROVIDER_EX,
+				self::M_CUSTOMER_CHG,
+				self::M_REVISION_ID,
+				self::M_QUOTE_TS,
+				self::M_PRICING_MODE,
+				self::M_COLLECT_HOURS,
+			);
+			$out = array();
+			foreach ( $keys as $k ) {
+				$v = $item->get_meta( $k, true );
+				if ( '' !== (string) $v ) {
+					$out[ $k ] = (string) $v;
+				}
+			}
+			return $out;
+		}
+		return null;
+	}
+
+	/**
 	 * Assemble the WC rate meta_data for the `_locker` rate. Underscore-prefixed
 	 * keys are hidden from the customer and persist onto the order shipping item;
 	 * the plain keys are shown beneath the rate. Pure — the caller supplies the
@@ -207,9 +269,10 @@ class ES_TCG_Locker_Rate {
 	 * @param array $pricing       Output of compute_pricing().
 	 * @param int   $quote_ts      Quote timestamp.
 	 * @param float $packed_weight Packer total packed weight (kg).
+	 * @param float $collect_hours Collection window promised at checkout (hours).
 	 * @return array meta_data map.
 	 */
-	public static function build_rate_meta( $locker, $offer, $origin_id, $pricing, $quote_ts, $packed_weight = 0.0 ) {
+	public static function build_rate_meta( $locker, $offer, $origin_id, $pricing, $quote_ts, $packed_weight = 0.0, $collect_hours = 36.0 ) {
 		$box_display = '' !== ( $offer['box_size'] ?? '' ) ? $offer['box_size'] : ( $offer['box_name'] ?? '' );
 		$dims        = is_array( $offer['dimensions'] ?? null ) ? $offer['dimensions'] : array();
 
@@ -229,6 +292,7 @@ class ES_TCG_Locker_Rate {
 			self::M_BOX_SIZE      => (string) ( $offer['box_size'] ?? '' ),
 			self::M_BOX_DIMS      => self::format_dims( $dims ),
 			self::M_PACKED_WEIGHT => (string) round( (float) $packed_weight, 3 ),
+			self::M_COLLECT_HOURS => (string) ES_TCG_Locker_Tracking::sane_collection_hours( $collect_hours ),
 			self::M_PROVIDER_RATE => (string) $pricing['provider_rate_incl'],
 			self::M_CUSTOMER_CHG  => (string) $pricing['customer_charge_incl'],
 			self::M_REVISION_ID   => (string) ( $offer['rate_revision_id'] ?? '' ),

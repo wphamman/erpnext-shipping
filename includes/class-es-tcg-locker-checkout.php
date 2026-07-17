@@ -159,6 +159,20 @@ class ES_TCG_Locker_Checkout {
 		<?php
 	}
 
+	/**
+	 * Whether the "Parcel In Locker" email will actually send. It is registered
+	 * only in 'active' fulfillment mode, and a merchant can disable it in
+	 * WooCommerce → Emails. We only promise the email at checkout when both hold.
+	 */
+	private static function arrival_email_enabled() {
+		if ( ! function_exists( 'WC' ) ) {
+			return false;
+		}
+		$emails = WC()->mailer()->get_emails(); // Construction registers our class in active mode.
+		$email  = $emails['ES_Email_Locker_Arrived'] ?? null;
+		return $email && is_callable( array( $email, 'is_enabled' ) ) && $email->is_enabled();
+	}
+
 	/** Show selected-locker controls directly beneath the real priced WC rate. */
 	public static function render_rate_selector( $method, $index ) {
 		$rate_id = is_object( $method ) && method_exists( $method, 'get_id' ) ? $method->get_id() : '';
@@ -169,11 +183,41 @@ class ES_TCG_Locker_Checkout {
 		if ( ! $sel ) {
 			return;
 		}
-		self::render_control( $sel, false );
+		// Read the collection window from THIS rate's own snapshot, not the live
+		// setting: the priced rate is what persists to the order (and drives the
+		// email's deadline). If an operator retunes the setting while this rate sits
+		// cached in the customer's session, the global value would diverge from the
+		// promise actually being sold. Falls back to the live setting only if the
+		// rate predates the snapshot.
+		$rate_hours = null;
+		if ( is_callable( array( $method, 'get_meta_data' ) ) ) {
+			$rm = (array) $method->get_meta_data();
+			if ( isset( $rm[ ES_TCG_Locker_Rate::M_COLLECT_HOURS ] ) && '' !== $rm[ ES_TCG_Locker_Rate::M_COLLECT_HOURS ] ) {
+				$rate_hours = $rm[ ES_TCG_Locker_Rate::M_COLLECT_HOURS ];
+			}
+		}
+		self::render_control( $sel, false, $rate_hours );
 	}
 
-	/** Shared cart/checkout locker search and selected-locker control. */
-	private static function render_control( $sel, $pre_rate = false ) {
+	/**
+	 * Shared cart/checkout locker search and selected-locker control.
+	 *
+	 * @param float|string|null $hours_override Collection window to display. When set
+	 *        (the priced-rate path), it is the rate's own snapshot so the note matches
+	 *        exactly what will be persisted. Null (pre-rate) falls back to the setting.
+	 */
+	private static function render_control( $sel, $pre_rate = false, $hours_override = null ) {
+		// Same number the arrival email computes its deadline from, so the promise
+		// made here and the deadline stated there can never disagree.
+		$hours       = ( null !== $hours_override )
+			? ES_TCG_Locker_Tracking::sane_collection_hours( $hours_override )
+			: es_tcg_locker_collection_hours();
+		$hours_label = rtrim( rtrim( number_format( $hours, 1 ), '0' ), '.' );
+		// Only promise the arrival email when it will actually send: it is registered
+		// only in 'active' fulfillment mode and a merchant can disable it in WC →
+		// Emails. Promising an email we won't send could make a customer wait past
+		// the collection window. The deadline copy stands either way.
+		$email_promised = self::arrival_email_enabled();
 		?>
 		<div class="es-tcg-locker" data-pre-rate="<?php echo $pre_rate ? '1' : '0'; ?>">
 			<?php if ( $sel ) : ?>
@@ -185,6 +229,23 @@ class ES_TCG_Locker_Checkout {
 					<?php if ( $pre_rate ) : ?>
 						<br><span class="es-locker-unavailable"><?php esc_html_e( 'Selected, but no locker rate is available for this cart yet.', 'erpnext-shipping' ); ?></span>
 					<?php endif; ?>
+					<br><span class="es-locker-window">
+						<?php
+						if ( $email_promised ) {
+								printf(
+									/* translators: %s: number of hours the parcel is held */
+									esc_html__( 'Collect within %s hours of arrival — the locker holds your parcel that long, then sends it back. We\'ll email you the moment it lands.', 'erpnext-shipping' ),
+									esc_html( $hours_label )
+								);
+							} else {
+								printf(
+									/* translators: %s: number of hours the parcel is held */
+									esc_html__( 'Collect within %s hours of arrival — the locker holds your parcel that long, then sends it back.', 'erpnext-shipping' ),
+									esc_html( $hours_label )
+								);
+							}
+						?>
+					</span>
 					<br><a href="#" class="es-locker-toggle"><?php esc_html_e( 'Change locker', 'erpnext-shipping' ); ?></a>
 					&middot; <a href="#" class="es-locker-clear"><?php esc_html_e( 'Remove', 'erpnext-shipping' ); ?></a>
 				</div>
@@ -325,6 +386,7 @@ class ES_TCG_Locker_Checkout {
 			.es-tcg-locker .es-locker-pick strong{display:block}
 			.es-tcg-locker .es-locker-addr,.es-tcg-locker .es-locker-sizes,.es-tcg-locker .es-locker-hours{display:block;font-size:.85em;color:#555}
 			.es-tcg-locker .es-locker-unavailable{display:inline-block;margin-top:4px;color:#9a3412;font-size:.9em}
+			.es-tcg-locker .es-locker-window{display:block;margin-top:4px;font-size:.85em;color:#8a6d3b}
 			.es-tcg-locker .es-locker-loading,.es-tcg-locker .es-locker-empty{font-size:.9em;color:#777;padding:6px 2px}
 			@media(max-width:600px){.es-tcg-locker .es-locker-q{font-size:16px}}
 		</style>

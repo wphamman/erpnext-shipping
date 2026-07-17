@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-07-17
+
+### Added
+- **"Parcel In Locker" customer email.** When TCG reports a locker parcel has landed in the customer's destination locker, they get a one-time email naming the locker and stating the collection deadline. Toggleable/customisable in WooCommerce → Settings → Emails like every other fulfillment email.
+  - Fires on the provider's `in-locker` event via a new `es_tcg_locker_arrived` action, **not** on a WC status change: `in-locker` maps to `completed`, but so do the earlier transit states, and advancement is forward-only — so the order is already `completed` on arrival and never transitions.
+  - Gated on the shipment's **current** status being `in-locker`. Every delivered parcel keeps its `in-locker` event forever, so keying on history would mail "your parcel is waiting" to customers who collected days ago.
+  - The deadline is anchored to the provider's own arrival event, never to poll time (the poll runs every 15 minutes, so a poll-derived deadline would always sit later than the real cutoff). Provider datetimes are naive **SAST** — verified against four live shipments — and are parsed in the provider's timezone, not the site's, so a store running WordPress on UTC still reads arrivals correctly.
+  - Never restates the collection PIN — the provider's own message carries it.
+  - Suppressed rather than sent if the collection window has already lapsed; a "collect by yesterday" mail is worse than silence.
+- **Configurable collection window.** A new *Collection Window (hours)* setting (ERPNext Shipping → TCG Locker, default **36**). The same number is shown at checkout and used to compute the email's deadline, so the two can never disagree. Snapshotted onto the order at checkout (`_es_tcg_locker_collection_hours`), so retuning the setting later cannot move a deadline an existing order was sold on.
+- **Checkout collection notice.** The selected-locker control now states the collection window and that we will email on arrival.
+- **Re-book a dead locker booking.** When TCG reports a booked shipment as `cancelled` / `cancel-booking-expired`, the order panel now says so plainly and offers *Clear dead booking & allow re-book*. Clearing is refused unless TCG **confirms the shipment is dead on a live call** — a cached poll result is never enough, and any API error fails closed.
+  - Previously the booking meta was immutable once booked: `handle_clear()` hard-refused whenever a shipment id existed, so a booking that died at TCG could not be re-booked from Woo. The only workaround was hand-adding a tracking number, which left the poll chasing the dead waybill forever and the order permanently reporting a cancelled booking. Observed on three live retail orders (#30314/#30318/#30321).
+  - Clearing resets the arrival-notice state, so a re-booked parcel can notify on its own arrival.
+
+### Changed
+- `ES_TCG_Locker_Rate::read_order_snapshot()` is now the single implementation of the locker quote-snapshot read; `ES_TCG_Locker_Admin::read_order_locker_meta()` delegates to it. The admin class is only loaded behind `is_admin()`, but the tracking poll (WP-Cron) and the arrival email need the same read outside any admin request.
+
 ## [1.14.3] - 2026-07-14
 
 ### Added

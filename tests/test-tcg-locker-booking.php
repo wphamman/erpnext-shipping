@@ -207,3 +207,48 @@ es_test( 'lock_stale_threshold: derived from timeout plus order-write safety mar
 function wp_json_encode_or_var( $v ) {
 	return function_exists( 'json_encode' ) ? json_encode( $v ) : var_export( $v, true );
 }
+
+// ─────────── Dead-booking detection / re-book (v1.15.0) ───────────
+
+es_test( 'is_dead_status: only terminal provider failures are dead', function () {
+	foreach ( array( 'cancelled', 'cancel-booking-expired', 'CANCELLED', ' Cancel-Booking-Expired ' ) as $s ) {
+		es_ok( ES_TCG_Locker_Booking::is_dead_status( $s ), "$s is dead (case/space tolerant)" );
+	}
+	// Anything a parcel can still move out of must NOT be clearable.
+	foreach ( array(
+		'in-locker', 'in-transit', 'submitted', 'deposit-pending', 'collected',
+		'courier-collected', 'delivered', 'customer-collected', 'out-for-delivery',
+		'delivery-exception', 'returned-to-hub', '', 'unknown-future-status',
+	) as $s ) {
+		es_ok( ! ES_TCG_Locker_Booking::is_dead_status( $s ), "'$s' is NOT dead — must never be auto-cleared" );
+	}
+} );
+
+es_test( 'raw_from_courier_meta: extracts the locker status from combined meta', function () {
+	es_eq( 'cancel-booking-expired',
+		ES_TCG_Locker_Booking::raw_from_courier_meta( 'tcg-locker:cancel-booking-expired' ), 'single provider' );
+	es_eq( 'in-locker',
+		ES_TCG_Locker_Booking::raw_from_courier_meta( 'tcg:delivered, tcg-locker:in-locker' ), 'multi-provider meta' );
+	es_eq( 'in-locker',
+		ES_TCG_Locker_Booking::raw_from_courier_meta( 'tcg-locker:IN-LOCKER' ), 'normalised to lowercase' );
+	es_eq( '', ES_TCG_Locker_Booking::raw_from_courier_meta( 'tcg:delivered, mds:in-transit' ), 'locker absent' );
+	es_eq( '', ES_TCG_Locker_Booking::raw_from_courier_meta( '' ), 'empty meta' );
+	// Must not be fooled by another provider whose status merely contains the word.
+	es_eq( '', ES_TCG_Locker_Booking::raw_from_courier_meta( 'mds:tcg-locker-lookalike' ), 'prefix must anchor' );
+} );
+
+es_test( 'REGRESSION: a live booking is never classified dead (the #30322 shape)', function () {
+	// #30322 polled 'delivered' with a real shipment id — clearing that would
+	// destroy our only record of a shipment the customer actually received.
+	es_ok( ! ES_TCG_Locker_Booking::is_dead_status( 'delivered' ), 'delivered is not dead' );
+	es_ok( ! ES_TCG_Locker_Booking::is_dead_status(
+		ES_TCG_Locker_Booking::raw_from_courier_meta( 'tcg-locker:delivered' ) ), 'end-to-end: delivered not clearable' );
+	// #30314's real shape MUST be clearable.
+	es_ok( ES_TCG_Locker_Booking::is_dead_status(
+		ES_TCG_Locker_Booking::raw_from_courier_meta( 'tcg-locker:cancel-booking-expired' ) ), 'the real dead shape is clearable' );
+} );
+
+es_test( 'arrival_claim_key: stable, shared between poll (set) and clear (delete)', function () {
+	es_eq( 'es_locker_arr_30314', ES_TCG_Locker_Booking::arrival_claim_key( 30314 ), 'expected key format' );
+	es_eq( 'es_locker_arr_30314', ES_TCG_Locker_Booking::arrival_claim_key( '30314' ), 'coerces to int' );
+} );

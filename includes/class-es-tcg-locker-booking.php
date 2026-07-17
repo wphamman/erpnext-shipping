@@ -109,6 +109,49 @@ class ES_TCG_Locker_Booking {
 	}
 
 	/**
+	 * Terminal PROVIDER states: the shipment is dead and will never move again.
+	 *
+	 * Distinct from our own booking state — the booking succeeded (we hold a real
+	 * shipment id), but TCG has since cancelled or expired it. Either way nothing
+	 * will ever be collected against that waybill, so the order must be re-bookable.
+	 *
+	 * Note `cancel-booking-expired` reads like an accident but is also what a
+	 * REQUESTED cancellation produces — the two are indistinguishable from the
+	 * status alone, and both leave the same dead booking to clean up.
+	 */
+	/**
+	 * Option key for the permanent one-shot arrival-notification claim (set by the
+	 * poll, cleared on dead-booking re-book). Defined here so the writer (cron) and
+	 * the clearer (admin) cannot drift apart.
+	 */
+	public static function arrival_claim_key( $order_id ) {
+		return 'es_locker_arr_' . (int) $order_id;
+	}
+
+	public static function is_dead_status( $raw ) {
+		return in_array(
+			strtolower( trim( (string) $raw ) ),
+			array( 'cancelled', 'cancel-booking-expired' ),
+			true
+		);
+	}
+
+	/**
+	 * Extract this provider's raw status from the combined `_es_courier_status`
+	 * meta, which carries one or more comma-separated `provider:status` pairs.
+	 * Returns '' when TCG Locker has not been polled for this order.
+	 */
+	public static function raw_from_courier_meta( $meta ) {
+		foreach ( explode( ',', (string) $meta ) as $part ) {
+			$part = trim( $part );
+			if ( 0 === strpos( $part, 'tcg-locker:' ) ) {
+				return strtolower( trim( substr( $part, strlen( 'tcg-locker:' ) ) ) );
+			}
+		}
+		return '';
+	}
+
+	/**
 	 * Classify a ES_TCG_Locker_Client::create_shipment() result into a durable
 	 * booking state. This is the heart of the idempotency contract:
 	 *

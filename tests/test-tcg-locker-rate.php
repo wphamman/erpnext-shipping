@@ -151,3 +151,26 @@ es_test( 'build_rate_meta — persists exact quote, origin and pricing; hides se
 	es_eq( 'Brackenfell Locker', $meta['Locker'], 'customer-visible locker name' );
 	es_eq( 'L', $meta['Box'], 'customer-visible box size' );
 } );
+
+es_test( 'build_rate_meta: snapshots the collection window promised at checkout', function () {
+	$locker  = array( 'code' => 'RVM00565', 'name' => 'De Bron', 'address' => 'Malmesbury' );
+	$offer   = array( 'service_code' => 'L2LXS - ECO', 'box_size' => 'XS', 'dimensions' => array() );
+	$pricing = array(
+		'provider_rate_incl'    => 49,
+		'provider_rate_ex_vat'  => 42.61,
+		'customer_charge_incl'  => 49,
+		'revision_id'           => 1048,
+		'pricing_mode'          => 'live',
+	);
+	$meta = ES_TCG_Locker_Rate::build_rate_meta( $locker, $offer, 'cape-town', $pricing, 1783954869, 0.048, 36 );
+	es_eq( '36', $meta[ ES_TCG_Locker_Rate::M_COLLECT_HOURS ], 'promised window persisted onto the rate' );
+
+	// An operator retuning the setting later must not move an existing promise:
+	// the order carries its own snapshot.
+	$meta12 = ES_TCG_Locker_Rate::build_rate_meta( $locker, $offer, 'cape-town', $pricing, 1783954869, 0.048, 12 );
+	es_eq( '12', $meta12[ ES_TCG_Locker_Rate::M_COLLECT_HOURS ], 'window is per-quote, not global' );
+
+	// Garbage from settings still yields a sane, stated promise.
+	$bad = ES_TCG_Locker_Rate::build_rate_meta( $locker, $offer, 'cape-town', $pricing, 1783954869, 0.048, 'junk' );
+	es_eq( '36', $bad[ ES_TCG_Locker_Rate::M_COLLECT_HOURS ], 'garbage window falls back to 36' );
+} );

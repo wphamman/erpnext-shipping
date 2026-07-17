@@ -92,44 +92,10 @@ class ES_TCG_Locker_Admin {
 	 * @return array|null Map of ES_TCG_Locker_Rate::M_* keys → string values.
 	 */
 	public static function read_order_locker_meta( $order ) {
-		if ( ! $order || ! is_callable( array( $order, 'get_items' ) ) ) {
-			return null;
-		}
-		foreach ( $order->get_items( 'shipping' ) as $item ) {
-			$svc = (string) $item->get_meta( ES_TCG_Locker_Rate::M_SERVICE_CODE, true );
-			if ( '' === $svc ) {
-				continue;
-			}
-			$keys = array(
-				ES_TCG_Locker_Rate::M_DEST_CODE,
-				ES_TCG_Locker_Rate::M_DEST_NAME,
-				ES_TCG_Locker_Rate::M_DEST_ADDRESS,
-				ES_TCG_Locker_Rate::M_DISPATCH_LOC,
-				ES_TCG_Locker_Rate::M_SERVICE_CODE,
-				ES_TCG_Locker_Rate::M_SERVICE_NAME,
-				ES_TCG_Locker_Rate::M_BOX_CODE,
-				ES_TCG_Locker_Rate::M_BOX_NAME,
-				ES_TCG_Locker_Rate::M_BOX_SIZE,
-				ES_TCG_Locker_Rate::M_BOX_DIMS,
-				ES_TCG_Locker_Rate::M_BOX_MAX_WT,
-				ES_TCG_Locker_Rate::M_PACKED_WEIGHT,
-				ES_TCG_Locker_Rate::M_PROVIDER_RATE,
-				ES_TCG_Locker_Rate::M_PROVIDER_EX,
-				ES_TCG_Locker_Rate::M_CUSTOMER_CHG,
-				ES_TCG_Locker_Rate::M_REVISION_ID,
-				ES_TCG_Locker_Rate::M_QUOTE_TS,
-				ES_TCG_Locker_Rate::M_PRICING_MODE,
-			);
-			$out = array();
-			foreach ( $keys as $k ) {
-				$v = $item->get_meta( $k, true );
-				if ( '' !== (string) $v ) {
-					$out[ $k ] = (string) $v;
-				}
-			}
-			return $out;
-		}
-		return null;
+		// Single implementation lives on ES_TCG_Locker_Rate, which (unlike this
+		// admin-only class) is loaded in every request context — the tracking poll
+		// and the arrival email need the same snapshot outside of wp-admin.
+		return ES_TCG_Locker_Rate::read_order_snapshot( $order );
 	}
 
 	// ─────────────────────────── Meta box ──────────────────────────────
@@ -190,6 +156,13 @@ class ES_TCG_Locker_Admin {
 		// status never reached 'booking').
 		$stale_lock   = self::lock_state( $order_id )['stale'];
 		$needs_review = '' === $shipment_id && ( ES_TCG_Locker_Booking::is_blocking_status( $status ) || $stale_lock );
+		// A booking we hold a real shipment id for, which TCG has since cancelled or
+		// expired. Nothing will ever move against that waybill, so the order must be
+		// re-bookable — otherwise staff can only work around it by hand-adding a
+		// tracking number, leaving the poll chasing a dead waybill forever.
+		$last_raw     = ES_TCG_Locker_Booking::raw_from_courier_meta( $order->get_meta( '_es_courier_status', true ) );
+		$dead_booking = ES_TCG_Locker_Booking::STATE_BOOKED === $status && '' !== $shipment_id
+			&& ES_TCG_Locker_Booking::is_dead_status( $last_raw );
 
 		$g = function ( $k ) use ( $snap ) {
 			return isset( $snap[ $k ] ) ? $snap[ $k ] : '';
@@ -226,6 +199,23 @@ class ES_TCG_Locker_Admin {
 						<br><span style="color:#666;"><?php esc_html_e( 'Tracking', 'erpnext-shipping' ); ?>: <?php echo esc_html( $tracking_ref ); ?></span>
 					<?php endif; ?>
 				</p>
+				<?php if ( $dead_booking ) : ?>
+					<div style="background:#fbeaea;border:1px solid #d63638;border-radius:4px;padding:8px 10px;font-size:12px;color:#8a1f1f;">
+						<strong><?php esc_html_e( 'This booking is dead at TCG', 'erpnext-shipping' ); ?></strong><br>
+						<?php
+						printf(
+							/* translators: %s: provider status, e.g. "Cancel Booking Expired" */
+							esc_html__( 'The provider reports "%s", so nothing will be collected against this waybill. Clear it to book this order into a locker again. The labels below are for the dead booking and should not be used.', 'erpnext-shipping' ),
+							esc_html( ES_TCG_Locker_Tracking::label( $last_raw ) )
+						);
+						?>
+					</div>
+					<p style="margin-top:8px;">
+						<button type="button" class="button button-primary es-tcg-clear-dead" data-order="<?php echo esc_attr( $order_id ); ?>" style="width:100%;">
+							<?php esc_html_e( 'Clear dead booking & allow re-book', 'erpnext-shipping' ); ?>
+						</button>
+					</p>
+				<?php endif; ?>
 				<?php
 				$label_nonce = wp_create_nonce( 'es_tcg_locker_label_' . $order_id );
 				$wb  = admin_url( 'admin-ajax.php?action=es_tcg_locker_label&kind=waybill&order_id=' . $order_id . '&_wpnonce=' . $label_nonce );
@@ -263,10 +253,11 @@ class ES_TCG_Locker_Admin {
 		<script>
 		jQuery(function($){
 			var nonce = <?php echo wp_json_encode( wp_create_nonce( 'es_tcg_locker_book_' . $order_id ) ); ?>;
-			$('.es-tcg-book, .es-tcg-clear-ambiguous').on('click', function(){
+			$('.es-tcg-book, .es-tcg-clear-ambiguous, .es-tcg-clear-dead').on('click', function(){
 				var $btn = $(this);
-				var clear = $btn.hasClass('es-tcg-clear-ambiguous');
-				if (clear && !window.confirm(<?php echo wp_json_encode( esc_html__( 'Only do this if the TCG portal shows NO shipment for this order. Continue?', 'erpnext-shipping' ) ); ?>)) { return; }
+				var clear = $btn.hasClass('es-tcg-clear-ambiguous') || $btn.hasClass('es-tcg-clear-dead');
+				if ($btn.hasClass('es-tcg-clear-ambiguous') && !window.confirm(<?php echo wp_json_encode( esc_html__( 'Only do this if the TCG portal shows NO shipment for this order. Continue?', 'erpnext-shipping' ) ); ?>)) { return; }
+				if ($btn.hasClass('es-tcg-clear-dead') && !window.confirm(<?php echo wp_json_encode( esc_html__( 'This clears the dead booking so the order can be booked again. The status is re-checked with TCG first — if the shipment is actually alive, nothing is cleared. Continue?', 'erpnext-shipping' ) ); ?>)) { return; }
 				$btn.prop('disabled', true).text(<?php echo wp_json_encode( esc_html__( 'Working…', 'erpnext-shipping' ) ); ?>);
 				$.post(ajaxurl, {
 					action: 'es_tcg_locker_book',
@@ -455,14 +446,80 @@ class ES_TCG_Locker_Admin {
 	 */
 	private static function handle_clear( $order ) {
 		$shipment_id = (string) $order->get_meta( ES_TCG_Locker_Booking::M_SHIPMENT_ID, true );
-		if ( '' !== $shipment_id ) {
-			wp_send_json_error( array( 'message' => __( 'This order already has a booked shipment; nothing to clear.', 'erpnext-shipping' ) ) );
-		}
-		$lock = self::lock_state( $order->get_id() );
+		$lock        = self::lock_state( $order->get_id() );
 		if ( $lock['present'] && ! $lock['stale'] ) {
 			wp_send_json_error( array( 'message' => __( 'A booking is currently in progress for this order. Wait a moment, then reload before clearing.', 'erpnext-shipping' ) ) );
 		}
 		$status = (string) $order->get_meta( ES_TCG_Locker_Booking::M_BOOKING_STATUS, true );
+
+		if ( '' !== $shipment_id ) {
+			// A real booked shipment. Only clearable when TCG ITSELF says it is dead,
+			// and only on a live check — a cached `_es_courier_status` could be stale
+			// and we must never abandon a shipment that is actually moving.
+			if ( ES_TCG_Locker_Booking::STATE_BOOKED !== $status ) {
+				wp_send_json_error( array( 'message' => __( 'This order already has a booked shipment; nothing to clear.', 'erpnext-shipping' ) ) );
+			}
+
+			// HOLD the booking mutex across the whole reconciliation. The dead-check
+			// is a live API call taking seconds; without the lock a re-book could
+			// acquire the mutex in that window and then have it blindly deleted at the
+			// end here, letting two bookings run at once (duplicate chargeable
+			// shipments). We own the lock, verify, mutate, then release OUR token.
+			$opts    = function_exists( 'es_tcg_locker_settings' ) ? es_tcg_locker_settings() : array();
+			$timeout = (int) ( $opts['tcg_locker_rate_timeout'] ?? 0 );
+			$token   = self::mint_token();
+			// acquire_or_replace_stale, not plain acquire: a dead booking may ALSO
+			// carry a crash-stranded stale lock (the earlier guard deliberately lets
+			// the clear proceed in that case). Plain INSERT IGNORE can't acquire while
+			// that row exists, so the operator would be permanently locked out. This
+			// atomically takes over an expired lease but still refuses a live one.
+			if ( ! ES_Option_Mutex::acquire_or_replace_stale( self::LOCK_PREFIX . (int) $order->get_id(), $token, ES_TCG_Locker_Booking::lock_stale_threshold( $timeout ) ) ) {
+				wp_send_json_error( array( 'message' => __( 'A booking or clear is already in progress for this order. Reload and try again.', 'erpnext-shipping' ) ) );
+			}
+			// Exits below are wp_send_json_*/wp_die → exit(), bypassing finally; this
+			// ownership-checked shutdown release frees only our own lock.
+			register_shutdown_function( array( __CLASS__, 'release_lock' ), $order->get_id(), $token );
+
+			$dead = self::confirm_dead_at_provider( $order );
+			if ( ! $dead['ok'] ) {
+				wp_send_json_error( array( 'message' => $dead['message'] ) );
+			}
+			$order->update_meta_data( ES_TCG_Locker_Booking::M_BOOKING_STATUS, ES_TCG_Locker_Booking::STATE_NONE );
+			$order->update_meta_data( ES_TCG_Locker_Booking::M_SHIPMENT_ID, '' );
+			$order->update_meta_data( ES_TCG_Locker_Booking::M_TRACKING_REF, '' );
+			$order->update_meta_data( ES_TCG_Locker_Booking::M_LAST_ERROR, '' );
+			// A re-book is a new parcel: let the arrival notice fire again for it.
+			$order->delete_meta_data( '_es_tcg_locker_arrival_notified' );
+			$order->delete_meta_data( '_es_tcg_locker_in_locker_at' );
+			// Retire the dead waybill's tracking item and its cached status. Left in
+			// place, the re-book would APPEND a second item: the customer would still
+			// see the dead waybill, the poll would fetch both, and the panel would
+			// classify the new booking from the old dead status.
+			self::retire_tracking_item( $order, $dead['waybill'] );
+			$order->delete_meta_data( '_es_courier_status' );
+			$order->add_order_note(
+				sprintf(
+					/* translators: 1: waybill, 2: provider status */
+					__( 'TCG Locker: dead booking cleared — shipment %1$s reported "%2$s" by TCG. Re-book allowed.', 'erpnext-shipping' ),
+					$dead['waybill'],
+					ES_TCG_Locker_Tracking::label( $dead['raw'] )
+				),
+				0
+			);
+			$order->save();
+			// Free the permanent arrival claim ONLY AFTER the save has committed the
+			// blanked waybill. Ordering matters against a concurrent arrival poll: the
+			// poll refuses to fire while the claim exists AND its identity guard refuses
+			// to fire once the persisted waybill no longer matches. Deleting the claim
+			// after the save means a racing poll always hits one guard or the other —
+			// claim-present before this line, waybill-gone after — so it can never fire
+			// a stale notice for the cleared shipment nor consume the re-book's claim.
+			delete_option( ES_TCG_Locker_Booking::arrival_claim_key( $order->get_id() ) );
+			// Ownership-checked release now; the shutdown release is the backstop.
+			self::release_lock( $order->get_id(), $token );
+			wp_send_json_success( array( 'message' => __( 'Dead booking cleared. You can book this order again.', 'erpnext-shipping' ) ) );
+		}
+
 		if ( ! ES_TCG_Locker_Booking::is_blocking_status( $status ) && ! $lock['stale'] ) {
 			wp_send_json_error( array( 'message' => __( 'Nothing to clear.', 'erpnext-shipping' ) ) );
 		}
@@ -472,6 +529,90 @@ class ES_TCG_Locker_Admin {
 		$order->save();
 		self::force_release_lock( $order->get_id() ); // Safe: lock is absent or stale (verified above).
 		wp_send_json_success( array( 'message' => __( 'Cleared. You can attempt booking again.', 'erpnext-shipping' ) ) );
+	}
+
+	/**
+	 * Drop the tracking item for a retired waybill, leaving any other carrier's
+	 * items untouched. Matched on the tracking NUMBER, not the provider, so a
+	 * re-booked locker order keeps only its live waybill.
+	 *
+	 * Does not save — the caller saves once, with the rest of the clear.
+	 */
+	private static function retire_tracking_item( $order, $waybill ) {
+		$waybill = trim( (string) $waybill );
+		if ( '' === $waybill || ! class_exists( 'ES_Fulfillment_Tracking' ) ) {
+			return;
+		}
+		$items = ES_Fulfillment_Tracking::get_tracking_items( $order );
+		if ( empty( $items ) ) {
+			return;
+		}
+		$kept = array();
+		foreach ( $items as $item ) {
+			$num = trim( (string) ( $item['tracking_number'] ?? '' ) );
+			// The provider can carry a parcel suffix (LL-ABC123_001) the tracking
+			// API rejects, so compare on the base waybill too.
+			$base = preg_replace( '/_\d+$/', '', $num );
+			if ( $num === $waybill || $base === $waybill ) {
+				continue;
+			}
+			$kept[] = $item;
+		}
+		if ( count( $kept ) === count( $items ) ) {
+			return; // Nothing matched.
+		}
+		if ( empty( $kept ) ) {
+			// DELETE the key, don't store an empty array. The poll's legacy queries
+			// select orders where this meta EXISTS, but poll_single_order() returns
+			// early on an empty array without refreshing _es_last_polled — so an
+			// empty-array order would sit permanently among the oldest candidates and
+			// waste a slot in every fixed-size batch.
+			$order->delete_meta_data( ES_Fulfillment_Tracking::META_KEY );
+			$order->delete_meta_data( '_es_last_polled' );
+			return;
+		}
+		$order->update_meta_data( ES_Fulfillment_Tracking::META_KEY, $kept );
+	}
+
+	/**
+	 * Ask TCG, right now, whether this order's booked shipment is terminally dead.
+	 *
+	 * Deliberately a LIVE call rather than a read of `_es_courier_status`: clearing
+	 * a booked shipment is destructive to our only record of it, so the decision
+	 * must rest on the provider's current word, not a cached poll result. Fails
+	 * CLOSED — any error, or any non-dead status, refuses the clear.
+	 *
+	 * @return array{ok:bool,message:string,raw:string,waybill:string}
+	 */
+	private static function confirm_dead_at_provider( $order ) {
+		$waybill = (string) $order->get_meta( ES_TCG_Locker_Booking::M_TRACKING_REF, true );
+		$out     = array( 'ok' => false, 'message' => '', 'raw' => '', 'waybill' => $waybill );
+		if ( '' === $waybill ) {
+			$out['message'] = __( 'This booking has no waybill to check with TCG. Clear it from the portal side first.', 'erpnext-shipping' );
+			return $out;
+		}
+		$client = es_tcg_locker_client();
+		if ( ! $client ) {
+			$out['message'] = __( 'TCG Locker is not configured, so the booking status cannot be verified. Nothing was cleared.', 'erpnext-shipping' );
+			return $out;
+		}
+		$res = $client->get_tracking( $waybill );
+		if ( empty( $res['ok'] ) ) {
+			$out['message'] = __( 'Could not reach TCG to verify this booking. Nothing was cleared — try again shortly.', 'erpnext-shipping' );
+			return $out;
+		}
+		$raw        = strtolower( trim( (string) ( $res['status'] ?? '' ) ) );
+		$out['raw'] = $raw;
+		if ( ! ES_TCG_Locker_Booking::is_dead_status( $raw ) ) {
+			$out['message'] = sprintf(
+				/* translators: %s: provider status */
+				__( 'TCG reports this shipment as "%s" — it is still live, so it was NOT cleared.', 'erpnext-shipping' ),
+				ES_TCG_Locker_Tracking::label( $raw )
+			);
+			return $out;
+		}
+		$out['ok'] = true;
+		return $out;
 	}
 
 	// ─────────────────────────── Validation ────────────────────────────

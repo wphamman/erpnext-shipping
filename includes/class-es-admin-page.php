@@ -196,6 +196,7 @@ class ES_Admin_Page {
             'bulk_delivery_round_trip_multiplier',
             'tcg_locker_fixed_customer_price', 'tcg_locker_free_shipping_threshold',
             'tcg_locker_rate_timeout', 'tcg_locker_fill_factor',
+            'tcg_locker_collection_hours',
         );
         foreach ( $number_fields as $key ) {
             if ( isset( $_POST[ $key ] ) ) {
@@ -512,6 +513,7 @@ class ES_Admin_Page {
                     <?php $this->render_text_row( 'tcg_locker_excluded_shipping_classes', __( 'Excluded Shipping Classes', 'erpnext-shipping' ), $v( 'tcg_locker_excluded_shipping_classes', '' ) ); ?>
                     <?php $this->render_number_row( 'tcg_locker_rate_timeout', __( 'API Timeout (seconds)', 'erpnext-shipping' ), $v( 'tcg_locker_rate_timeout', '15' ) ); ?>
                     <?php $this->render_number_row( 'tcg_locker_fill_factor', __( 'Multi-item Fill Factor', 'erpnext-shipping' ), $v( 'tcg_locker_fill_factor', '0.70' ), __( 'Usable fraction (0–1) of a locker box for orders of 2+ items — allows for real-world packing air-gaps. Lower is more conservative (fewer multi-item orders are offered a locker). Single-item orders are unaffected. Default 0.70.', 'erpnext-shipping' ) ); ?>
+                    <?php $this->render_number_row( 'tcg_locker_collection_hours', __( 'Collection Window (hours)', 'erpnext-shipping' ), $v( 'tcg_locker_collection_hours', '36' ), __( 'How long the customer has to collect once the parcel lands in the destination locker, before the provider removes it. Shown at checkout AND used to compute the deadline in the "Parcel In Locker" email, so the two always agree. Default 36.', 'erpnext-shipping' ) ); ?>
                 </table>
 
                 <!-- Pricing -->

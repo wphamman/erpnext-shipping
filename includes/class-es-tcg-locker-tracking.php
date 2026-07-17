@@ -26,6 +26,22 @@ defined( 'ABSPATH' ) || exit;
 
 class ES_TCG_Locker_Tracking {
 
+	/**
+	 * Timezone TCG's naive event datetimes are expressed in.
+	 *
+	 * TCG Locker (PUDO) is a South-Africa-only network, so its clock is SAST no
+	 * matter how the WordPress site is configured. Deliberately NOT wp_timezone():
+	 * a store running WordPress on UTC would otherwise read every arrival two hours
+	 * late and promise a deadline two hours after the real collection cutoff.
+	 * Verified 2026-07-17 against four live shipments — see event_timestamp().
+	 */
+	const PROVIDER_TZ = 'Africa/Johannesburg';
+
+	/** Provider clock as a DateTimeZone. */
+	public static function provider_tz() {
+		return new DateTimeZone( self::PROVIDER_TZ );
+	}
+
 	/** Raw statuses that advance an order to WC `completed` ("Shipped"). */
 	private static $shipped = array(
 		'customer-deposited',
@@ -109,5 +125,130 @@ class ES_TCG_Locker_Tracking {
 			'cancelled',
 			'cancel-booking-expired',
 		);
+	}
+
+	// ───────────────────── Arrival / collection window ─────────────────────
+
+	/**
+	 * Resolve the payload node carrying the shipment fields.
+	 * Mirrors ES_TCG_Locker_Client::extract_tracking_status()'s node resolution so
+	 * both read the same place if the provider ever nests the response.
+	 */
+	private static function node( $data ) {
+		if ( ! is_array( $data ) ) {
+			return array();
+		}
+		if ( isset( $data['shipment'] ) && is_array( $data['shipment'] ) ) {
+			return $data['shipment'];
+		}
+		if ( isset( $data['data'] ) && is_array( $data['data'] ) ) {
+			return $data['data'];
+		}
+		return $data;
+	}
+
+	/**
+	 * Earliest tracking-event date for a raw status, exactly as the provider sent it.
+	 *
+	 * The provider returns events newest-first, and a parcel can re-enter a state
+	 * (e.g. removed and re-deposited), so we take the EARLIEST match — first arrival
+	 * starts the collection clock. Returns '' when no such event is present.
+	 *
+	 * Pure: no WP, no timezone interpretation (see event_timestamp()).
+	 *
+	 * @param array  $data   Raw tracking payload.
+	 * @param string $status Raw status slug, e.g. 'in-locker'.
+	 * @return string Provider datetime string, or ''.
+	 */
+	public static function first_event_time( $data, $status ) {
+		$status = strtolower( trim( (string) $status ) );
+		if ( '' === $status ) {
+			return '';
+		}
+		$events = self::node( $data )['tracking_events'] ?? array();
+		if ( ! is_array( $events ) ) {
+			return '';
+		}
+		$best = '';
+		foreach ( $events as $ev ) {
+			if ( ! is_array( $ev ) ) {
+				continue;
+			}
+			if ( strtolower( trim( (string) ( $ev['status'] ?? '' ) ) ) !== $status ) {
+				continue;
+			}
+			$date = trim( (string) ( $ev['date'] ?? '' ) );
+			if ( '' === $date ) {
+				continue;
+			}
+			// Provider format is fixed-width ISO-like, so lexical order == chronological.
+			if ( '' === $best || $date < $best ) {
+				$best = $date;
+			}
+		}
+		return $best;
+	}
+
+	/**
+	 * Convert a provider event date to a UTC timestamp.
+	 *
+	 * TCG sends NAIVE local datetimes with no offset ("2026-07-15 08:03:55.596697").
+	 * Verified 2026-07-17 against four live shipments: the provider's
+	 * `shipment_time_created` matches WooCommerce's own booking timestamp to within
+	 * 1 second when read as SAST — i.e. these are South African local times.
+	 *
+	 * Callers should pass self::provider_tz(), NOT the site timezone: the provider's
+	 * clock is SAST regardless of how this WordPress install is configured.
+	 * Injected rather than read inside, so the method stays pure and testable.
+	 *
+	 * @param string       $raw Provider datetime.
+	 * @param DateTimeZone $tz  Timezone to interpret $raw in.
+	 * @return int UTC timestamp, or 0 when unparseable.
+	 */
+	public static function event_timestamp( $raw, $tz ) {
+		$raw = trim( (string) $raw );
+		if ( '' === $raw || ! $tz instanceof DateTimeZone ) {
+			return 0;
+		}
+		$raw = preg_replace( '/\.\d+$/', '', $raw ); // drop fractional seconds
+		try {
+			$dt = new DateTime( $raw, $tz );
+		} catch ( Exception $ex ) {
+			return 0;
+		}
+		return (int) $dt->getTimestamp();
+	}
+
+	/**
+	 * Clamp the operator-set collection window (hours). Mirrors
+	 * ES_TCG_Locker_Packer::sane_fill_factor(): unset/garbage falls back to the
+	 * default rather than disabling the promise or inventing an absurd one.
+	 */
+	public static function sane_collection_hours( $value, $default = 36.0 ) {
+		if ( null === $value || '' === $value || ! is_numeric( $value ) ) {
+			return (float) $default;
+		}
+		$v = (float) $value;
+		if ( $v <= 0 || $v > 720 ) { // 0 or >30 days is not a collection window
+			return (float) $default;
+		}
+		return $v;
+	}
+
+	/**
+	 * Collection deadline = arrival + window. Pure.
+	 *
+	 * Keyed on the provider's own arrival event, never on our poll clock — the poll
+	 * runs every 15 minutes, so a poll-derived deadline would always sit LATER than
+	 * the real one and could send a customer to an emptied locker.
+	 *
+	 * @return int UTC timestamp, or 0 when arrival is unknown.
+	 */
+	public static function collection_deadline( $arrival_ts, $hours ) {
+		$arrival_ts = (int) $arrival_ts;
+		if ( $arrival_ts <= 0 ) {
+			return 0;
+		}
+		return $arrival_ts + (int) round( self::sane_collection_hours( $hours ) * 3600 );
 	}
 }

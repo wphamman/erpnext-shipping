@@ -589,10 +589,159 @@ class ES_Fulfillment_Cron {
 
         $raw    = strtolower( trim( (string) ( $res['status'] ?? '' ) ) );
         $mapped = ES_TCG_Locker_Tracking::map_status( $raw ); // 'completed' | 'delivered' | null.
+
+        self::maybe_notify_locker_arrival( $order, $waybill, $raw, $res['data'] ?? array(), $logger, $ctx );
+
         return array(
             'raw'       => 'tcg-locker:' . ( '' !== $raw ? $raw : 'unknown' ),
             'wc_status' => $mapped,
         );
+    }
+
+    /**
+     * Fire the customer "your parcel is in the locker" notice exactly once.
+     *
+     * This cannot hang off a WC status transition: `in-locker` maps to `completed`,
+     * but so do `courier-collected` / `in-transit`, and advancement is forward-only —
+     * so the order reached `completed` days earlier and never transitions on arrival.
+     * We therefore key on the provider's own in-locker EVENT, not on order status.
+     *
+     * The arrival time comes from that event rather than this poll's clock: the poll
+     * runs every 15 minutes, so a poll-derived deadline would always sit LATER than
+     * the real one and could send a customer to an already-emptied locker.
+     *
+     * Gated on the CURRENT status being `in-locker`, not merely on an in-locker
+     * event existing in history. Every delivered parcel keeps its in-locker event
+     * forever, so keying on history alone would mail "your parcel is waiting"
+     * to customers who collected days ago — and to returned/expired shipments.
+     * If the customer collects between two polls we simply never send, which is
+     * correct: there is nothing useful to tell them.
+     *
+     * At-most-once: the flag is persisted BEFORE the action fires, so a failure in
+     * any listener can never re-mail the customer on a later poll. The flag is only
+     * burned once we know the mailer is actually listening (see below) — otherwise
+     * a cron request without WooCommerce's mailer would silently eat the one email
+     * this order ever gets.
+     *
+     * @param string $waybill The tracking reference THIS poll fetched.
+     * @param string $raw     Current provider status for this shipment.
+     */
+    private static function maybe_notify_locker_arrival( $order, $waybill, $raw, $data, $logger, $ctx ) {
+        if ( ! $order || $order->get_meta( '_es_tcg_locker_arrival_notified', true ) ) {
+            return;
+        }
+        if ( 'in-locker' !== $raw ) {
+            return; // Not sitting in the destination locker right now.
+        }
+        $raw_date = ES_TCG_Locker_Tracking::first_event_time( $data, 'in-locker' );
+        if ( '' === $raw_date ) {
+            return; // No arrival event to anchor a deadline to.
+        }
+        // Provider clock, NOT wp_timezone(): TCG is SA-only and sends naive SAST.
+        $ts = ES_TCG_Locker_Tracking::event_timestamp( $raw_date, ES_TCG_Locker_Tracking::provider_tz() );
+        if ( $ts <= 0 ) {
+            // Unparseable date: skip rather than state a deadline we cannot stand behind.
+            $logger->warning(
+                'TCG Locker: unparseable in-locker event date "' . $raw_date . '" on order '
+                . $order->get_id() . '; arrival notice skipped.',
+                $ctx
+            );
+            return;
+        }
+
+        // Nothing truthful to say about where it is without the quote snapshot, and
+        // the email would bail anyway — don't burn the one-shot flag on it.
+        if ( empty( ES_TCG_Locker_Rate::read_order_snapshot( $order ) ) ) {
+            return;
+        }
+
+        // Decide send-vs-suppress (read-only). Never state a deadline that has already
+        // passed: if the poll was down long enough for the window to lapse, an
+        // "in-locker" status is stale or the parcel is on its way back, and a
+        // "collect by <yesterday>" mail is worse than silence. Rare — the poll runs
+        // every 15 minutes against a 36-hour window.
+        $snap     = ES_TCG_Locker_Rate::read_order_snapshot( $order );
+        $hours    = ES_TCG_Locker_Tracking::sane_collection_hours(
+            $snap[ ES_TCG_Locker_Rate::M_COLLECT_HOURS ] ?? es_tcg_locker_collection_hours()
+        );
+        $deadline = ES_TCG_Locker_Tracking::collection_deadline( $ts, $hours );
+        $lapsed   = ( $deadline > 0 && $deadline <= time() );
+
+        // Confirm the arrival-email LISTENER is actually registered before claiming.
+        // Constructing the mailer registers it — but only in 'active' fulfillment
+        // mode, where the email class is built; WC()->mailer() returns a valid mailer
+        // regardless of mode, so checking the mailer alone would claim-and-fire into
+        // the void (permanently, since the claim is one-shot) whenever locker
+        // checkout is offered but fulfillment is not active. Force construction, then
+        // check the listener itself. Bail WITHOUT claiming so a later activation
+        // retries. Only gates the send path; a lapsed window suppresses regardless.
+        if ( ! $lapsed ) {
+            if ( function_exists( 'WC' ) ) {
+                WC()->mailer(); // Triggers woocommerce_email_classes → registers our listener.
+            }
+            if ( ! has_action( 'es_tcg_locker_arrived' ) ) {
+                $logger->warning(
+                    'TCG Locker: arrival-email listener not registered (fulfillment not active?); '
+                    . 'deferring arrival notice for order ' . $order->get_id() . '.',
+                    $ctx
+                );
+                return;
+            }
+        }
+
+        // Identity guard against a dead-booking clear that ran concurrently with this
+        // poll. This poll may have fetched the OLD (now-cleared) waybill's status
+        // before an operator cleared the dead booking and re-booked. Firing now would
+        // set the one-shot flag for a shipment that no longer belongs to the order,
+        // suppressing the re-booked parcel's own arrival email. Re-read the order
+        // FRESH (the in-memory object predates any concurrent clear) and confirm its
+        // booking still points at the waybill we actually polled. The clear blanks
+        // the tracking ref, so a mismatch means "cleared — do not fire".
+        $fresh = wc_get_order( $order->get_id() );
+        if ( ! $fresh || (string) $fresh->get_meta( ES_TCG_Locker_Booking::M_TRACKING_REF, true ) !== (string) $waybill ) {
+            return;
+        }
+        $order = $fresh;
+
+        // Atomically claim the one-shot notification. The row/bulk/AJAX re-poll paths
+        // call poll_single_order() directly and bypass the global poll mutex, so two
+        // requests can both read the meta flag as unset above — this INSERT IGNORE
+        // lets exactly one win. Never released, so it is a permanent claim; the meta
+        // flag below is the durable, human-visible record. "At most once": a claimed
+        // request that then crashes before sending forgoes the email rather than
+        // risk a duplicate, which is the right trade for a customer notification.
+        $claim_key = ES_TCG_Locker_Booking::arrival_claim_key( $order->get_id() );
+        if ( ! ES_Option_Mutex::acquire( $claim_key, 'notify', DAY_IN_SECONDS ) ) {
+            return; // Another request already owns this notification.
+        }
+
+        // Re-verify identity AFTER acquiring — the check above and this acquire are
+        // not atomic, so a dead-booking clear could have committed its blank waybill
+        // and freed the old claim in between, letting us acquire a claim for a
+        // shipment that no longer belongs to the order. Left standing, that claim
+        // would also block the re-booked parcel's own notification. Re-read fresh;
+        // on mismatch, release the claim we just took and bail.
+        $recheck = wc_get_order( $order->get_id() );
+        if ( ! $recheck || (string) $recheck->get_meta( ES_TCG_Locker_Booking::M_TRACKING_REF, true ) !== (string) $waybill ) {
+            delete_option( $claim_key );
+            return;
+        }
+        $order = $recheck;
+
+        $order->update_meta_data( '_es_tcg_locker_in_locker_at', $ts );
+        $order->update_meta_data( '_es_tcg_locker_arrival_notified', 1 );
+        $order->save();
+
+        if ( $lapsed ) {
+            $logger->warning(
+                'TCG Locker: collection window already lapsed for order ' . $order->get_id()
+                . ' (arrived ' . gmdate( 'c', $ts ) . '); arrival notice suppressed.',
+                $ctx
+            );
+            return;
+        }
+
+        do_action( 'es_tcg_locker_arrived', $order->get_id(), $order );
     }
 
     /**
