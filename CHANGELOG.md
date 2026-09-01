@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.15.1] - 2026-09-01
+
+### Added
+- **Re-quote a locker order whose provider price changed after checkout.** When PUDO/TCG changes the live quote between checkout and booking, the fresh-rate drift guard correctly refuses to book (nothing is charged at a price the customer never agreed to). Previously the panel then offered only the Book button, which just re-failed with the same drift message — there was no in-plugin way forward, so staff had to book the parcel by hand on the PUDO portal and paste the waybill in, which left the poll and the arrival email out of the loop.
+  - The order panel now detects a drift refusal and shows a **Re-quote live price** action with a plain explanation. Re-quoting fetches the current provider offer for the *same* locker, service and box.
+  - **Two-step, so the operator explicitly accepts any change.** The first click previews and persists nothing; it returns a prompt naming the figures — e.g. *"The locker price changed from R49.00 to R59.00 since the customer checked out. Accept the new R59.00 price…?"*. Only on confirmation is the snapshot refreshed. If the live price moves again between preview and confirm, it re-prompts with the newer figure rather than persisting one the operator never saw.
+  - **The customer charge is never touched** — only the provider rate/revision on the order's locker line are updated, so the drift guard passes and the order books through the plugin (keeping tracking + the "Parcel In Locker" email). Any increase is absorbed by the store. Every re-quote writes an order note recording the old→new rate and revision.
+  - Fail-closed like the drift guard: refuses if the chosen service is gone, the provider box changed (needs manual handling, never silently re-boxed), or there is no usable live price. Shares the booking mutex, so a re-quote and a booking can never run at once. Decision logic is pure and unit-tested (`ES_TCG_Locker_Booking::plan_requote`).
+
 ## [1.15.0] - 2026-07-17
 
 ### Added

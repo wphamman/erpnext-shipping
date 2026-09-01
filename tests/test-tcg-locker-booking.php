@@ -185,6 +185,50 @@ es_test( 'detect_drift: a snapshot missing its service code refuses', function (
 	es_eq( 'no_persisted_service', $d['reason'], 'reason no_persisted_service' );
 } );
 
+// ─────────── Staff re-quote planning (v1.15.1) ───────────
+
+es_test( 'plan_requote: price + revision moved → ok, reports old/new and changed=true', function () use ( $SNAP ) {
+	$offers = array(
+		array( 'service_code' => 'L2LL - ECO', 'box_code' => '13', 'rate' => 99.0, 'rate_excluding_vat' => 86.09, 'rate_revision_id' => 'rev_l_2' ),
+		array( 'service_code' => 'L2LXL - ECO', 'box_code' => '14', 'rate' => 115.0, 'rate_revision_id' => 'rev_xl_2' ),
+	);
+	$p = ES_TCG_Locker_Booking::plan_requote( $SNAP, $offers );
+	es_ok( $p['ok'], 'same service+box, numeric price → re-quotable' );
+	es_ok( $p['changed'], 'price/revision differ → changed' );
+	es_eq( 92.0, $p['old_rate'], 'old_rate from snapshot' );
+	es_eq( 99.0, $p['new_rate'], 'new_rate from live offer' );
+	es_eq( 'rev_l_1', $p['old_rev'], 'old_rev' );
+	es_eq( 'rev_l_2', $p['new_rev'], 'new_rev' );
+	es_eq( 86.09, $p['new_rate_ex'], 'ex-VAT carried when positive' );
+} );
+
+es_test( 'plan_requote: identical live offer → ok but changed=false', function () use ( $SNAP, $FRESH_MATCH ) {
+	$p = ES_TCG_Locker_Booking::plan_requote( $SNAP, $FRESH_MATCH );
+	es_ok( $p['ok'], 'unchanged offer still re-quotable' );
+	es_ok( ! $p['changed'], 'same rate + revision → not changed' );
+} );
+
+es_test( 'plan_requote: reuses detect_drift structural refusals (fail closed)', function () use ( $SNAP, $FRESH_MATCH ) {
+	es_eq( 'no_persisted_service', ES_TCG_Locker_Booking::plan_requote( array(), $FRESH_MATCH )['reason'], 'no service' );
+
+	$incomplete = array( ES_TCG_Locker_Rate::M_SERVICE_CODE => 'L2LL - ECO' );
+	es_eq( 'incomplete_snapshot', ES_TCG_Locker_Booking::plan_requote( $incomplete, $FRESH_MATCH )['reason'], 'no box/price' );
+
+	es_eq( 'no_fresh_quote', ES_TCG_Locker_Booking::plan_requote( $SNAP, array() )['reason'], 'no live offers' );
+
+	$other = array( array( 'service_code' => 'L2LXL - ECO', 'box_code' => '14', 'rate' => 115.0, 'rate_revision_id' => 'rev_xl_1' ) );
+	es_eq( 'service_unavailable', ES_TCG_Locker_Booking::plan_requote( $SNAP, $other )['reason'], 'chosen service gone' );
+
+	$rebox = array( array( 'service_code' => 'L2LL - ECO', 'box_code' => '99', 'rate' => 92.0, 'rate_revision_id' => 'rev_l_1' ) );
+	es_eq( 'box_changed', ES_TCG_Locker_Booking::plan_requote( $SNAP, $rebox )['reason'], 'provider box changed → refuse, not re-box' );
+
+	$noprice = array( array( 'service_code' => 'L2LL - ECO', 'box_code' => '13', 'rate' => null, 'rate_revision_id' => 'rev_l_2' ) );
+	es_eq( 'no_fresh_price', ES_TCG_Locker_Booking::plan_requote( $SNAP, $noprice )['reason'], 'no numeric fresh price' );
+
+	$failed = ES_TCG_Locker_Booking::plan_requote( array(), $FRESH_MATCH );
+	es_ok( ! $failed['ok'] && false === $failed['changed'], 'a failed plan is not ok and not changed' );
+} );
+
 es_test( 'lock_stale_threshold: derived from timeout plus order-write safety margin', function () {
 	// Default/absent timeout → the client default (15) drives the bound, floored.
 	es_eq( 180, ES_TCG_Locker_Booking::lock_stale_threshold( 0 ), 'absent → 180s floor' );

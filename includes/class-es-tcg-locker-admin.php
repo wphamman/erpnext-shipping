@@ -44,6 +44,7 @@ class ES_TCG_Locker_Admin {
 		// Controls are rendered inside the unified Shipment Tracking meta box by
 		// ES_Carrier_Booking_Admin. Keep only the hardened AJAX endpoints here.
 		add_action( 'wp_ajax_es_tcg_locker_book', array( __CLASS__, 'ajax_book' ) );
+		add_action( 'wp_ajax_es_tcg_locker_requote', array( __CLASS__, 'ajax_requote' ) );
 		add_action( 'wp_ajax_es_tcg_locker_label', array( __CLASS__, 'ajax_label' ) );
 	}
 
@@ -239,12 +240,30 @@ class ES_TCG_Locker_Admin {
 					</button>
 				</p>
 			<?php else : ?>
-				<?php if ( ES_TCG_Locker_Booking::STATE_ERROR === $status && '' !== $last_error ) : ?>
+				<?php
+				// A drift refusal from ajax_book() persists 'drift:<reason>' WITHOUT
+				// changing the booking status, so the order is still bookable — but a
+				// straight Book would just re-fail. Surface a Re-quote affordance that
+				// refreshes the live price (staff accept the new figure) before booking.
+				$is_drift    = ( 0 === strpos( (string) $last_error, 'drift:' ) );
+				$requote_err = ( 0 === strpos( (string) $last_error, 'requote:' ) );
+				?>
+				<?php if ( $is_drift ) : ?>
+					<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:8px 10px;font-size:12px;color:#856404;margin-bottom:8px;">
+						<strong><?php esc_html_e( 'Live PUDO price no longer matches checkout', 'erpnext-shipping' ); ?></strong><br>
+						<?php esc_html_e( 'The provider changed the quote since the customer paid, so booking was blocked. Re-quote to see the new price and refresh this order — the customer’s charge does not change, any increase is absorbed by the store.', 'erpnext-shipping' ); ?>
+					</div>
+					<p style="margin:0 0 8px;">
+						<button type="button" class="button button-primary es-tcg-requote" data-order="<?php echo esc_attr( $order_id ); ?>" style="width:100%;">
+							<?php esc_html_e( 'Re-quote live price', 'erpnext-shipping' ); ?>
+						</button>
+					</p>
+				<?php elseif ( ( ES_TCG_Locker_Booking::STATE_ERROR === $status || $requote_err ) && '' !== $last_error ) : ?>
 					<p style="color:#b32d2e;font-size:12px;margin:0 0 6px;">
 						<?php esc_html_e( 'Last attempt failed', 'erpnext-shipping' ); ?>: <?php echo esc_html( $last_error ); ?>
 					</p>
 				<?php endif; ?>
-				<button type="button" class="button button-primary es-tcg-book" data-order="<?php echo esc_attr( $order_id ); ?>" style="width:100%;" <?php disabled( ! $guard['can'] ); ?>>
+				<button type="button" class="button <?php echo $is_drift ? '' : 'button-primary'; ?> es-tcg-book" data-order="<?php echo esc_attr( $order_id ); ?>" style="width:100%;" <?php disabled( ! $guard['can'] ); ?>>
 					<?php esc_html_e( 'Book TCG Locker Shipment', 'erpnext-shipping' ); ?>
 				</button>
 			<?php endif; ?>
@@ -269,6 +288,35 @@ class ES_TCG_Locker_Admin {
 					window.alert(r && r.data && r.data.message ? r.data.message : <?php echo wp_json_encode( esc_html__( 'Booking failed.', 'erpnext-shipping' ) ); ?>);
 					location.reload();
 				});
+			});
+
+			// Re-quote: two steps. First POST (no `accepted`) previews the live price and
+			// returns a prompt naming the old→new figures; on OK we POST again WITH the
+			// accepted price. The server re-checks live at commit and, if the price moved
+			// again in between, prompts once more rather than persisting a stale figure.
+			var requoteLabel = <?php echo wp_json_encode( esc_html__( 'Re-quote live price', 'erpnext-shipping' ) ); ?>;
+			var requoteWorking = <?php echo wp_json_encode( esc_html__( 'Re-quoting…', 'erpnext-shipping' ) ); ?>;
+			var requoteFail = <?php echo wp_json_encode( esc_html__( 'Re-quote failed. Reload and try again.', 'erpnext-shipping' ) ); ?>;
+			function esRequote($btn, accepted){
+				var data = { action: 'es_tcg_locker_requote', _wpnonce: nonce, order_id: $btn.data('order') };
+				if (accepted !== null && accepted !== undefined) { data.confirm = 1; data.accepted = accepted; }
+				$.post(ajaxurl, data, function(r){
+					if (r && r.success && r.data && r.data.confirm) {
+						if (window.confirm(r.data.prompt)) {
+							esRequote($btn, r.data.new);
+						} else {
+							$btn.prop('disabled', false).text(requoteLabel);
+						}
+						return;
+					}
+					window.alert(r && r.data && r.data.message ? r.data.message : requoteFail);
+					location.reload();
+				});
+			}
+			$('.es-tcg-requote').on('click', function(){
+				var $btn = $(this);
+				$btn.prop('disabled', true).text(requoteWorking);
+				esRequote($btn, null);
 			});
 		});
 		</script>
@@ -430,6 +478,183 @@ class ES_TCG_Locker_Admin {
 		), 0 );
 		$order->save();
 		wp_send_json_error( array( 'message' => __( 'Booking failed. You can try again.', 'erpnext-shipping' ) ) );
+	}
+
+	// ─────────────────────────── Re-quote AJAX ─────────────────────────
+
+	/**
+	 * Staff re-quote: refresh a not-yet-booked locker order to the CURRENT live price
+	 * for the same locker/service/box, so a booking the fresh-rate drift guard refused
+	 * (the provider changed the quote after checkout) can be booked through the plugin.
+	 *
+	 * Two-step, so the operator explicitly accepts any price change:
+	 *   1. First call (no `accepted`) previews — it force-refreshes live, plans the
+	 *      re-quote, persists NOTHING, and returns a prompt naming the old→new price.
+	 *   2. The browser confirms and calls again WITH the accepted price. The commit
+	 *      re-checks live; if the price moved again since the preview it re-prompts
+	 *      instead of persisting a figure the operator never saw.
+	 *
+	 * Only the provider rate/revision are updated — never the customer charge, so any
+	 * increase is absorbed. Shares the booking mutex so a re-quote and a booking can
+	 * never run at once (a re-quote mutates the very snapshot booking certifies against).
+	 */
+	public static function ajax_requote() {
+		$order_id = intval( $_POST['order_id'] ?? 0 );
+
+		if ( ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ?? '' ) ), 'es_tcg_locker_book_' . $order_id ) ) {
+			wp_send_json_error( array( 'message' => __( 'Security check failed. Reload the order and try again.', 'erpnext-shipping' ) ) );
+		}
+		// Re-quoting authorises accepting a new provider price, so it is gated on the
+		// same manager-level booking capability, not the label/warehouse one.
+		if ( ! self::current_user_can_book() ) {
+			wp_send_json_error( array( 'message' => __( 'You do not have permission to re-quote shipments.', 'erpnext-shipping' ) ) );
+		}
+		$order = wc_get_order( $order_id );
+		if ( ! $order ) {
+			wp_send_json_error( array( 'message' => __( 'Order not found.', 'erpnext-shipping' ) ) );
+		}
+
+		// Only a not-yet-booked order can be re-quoted. A booked / in-progress /
+		// ambiguous order goes through the clear/re-book paths, never here.
+		$guard = ES_TCG_Locker_Booking::guard(
+			(string) $order->get_meta( ES_TCG_Locker_Booking::M_SHIPMENT_ID, true ),
+			(string) $order->get_meta( ES_TCG_Locker_Booking::M_BOOKING_STATUS, true )
+		);
+		if ( ! $guard['can'] ) {
+			wp_send_json_error( array( 'message' => __( 'This order cannot be re-quoted in its current state.', 'erpnext-shipping' ) ) );
+		}
+
+		$snap = self::read_order_locker_meta( $order );
+		if ( null === $snap || empty( $snap[ ES_TCG_Locker_Rate::M_SERVICE_CODE ] ) || empty( $snap[ ES_TCG_Locker_Rate::M_DEST_CODE ] ) ) {
+			wp_send_json_error( array( 'message' => __( 'This order has no TCG Locker quote to re-quote.', 'erpnext-shipping' ) ) );
+		}
+
+		$opts    = function_exists( 'es_tcg_locker_settings' ) ? es_tcg_locker_settings() : array();
+		$timeout = (int) ( $opts['tcg_locker_rate_timeout'] ?? 0 );
+
+		$token = self::mint_token();
+		if ( ! self::acquire_lock( $order_id, $token, ES_TCG_Locker_Booking::lock_stale_threshold( $timeout ) ) ) {
+			wp_send_json_error( array( 'message' => __( 'A booking is already in progress for this order.', 'erpnext-shipping' ) ) );
+		}
+		register_shutdown_function( array( __CLASS__, 'release_lock' ), $order_id, $token );
+
+		$client = function_exists( 'es_tcg_locker_client' ) ? es_tcg_locker_client( $opts ) : null;
+		if ( ! $client ) {
+			wp_send_json_error( array( 'message' => __( 'TCG Locker is not configured.', 'erpnext-shipping' ) ) );
+		}
+
+		// The order must still be bookable NOW (paid, locker live, origin enabled, and
+		// the CURRENT contents still fit the persisted box) — re-quoting a price the
+		// order can never use would only mislead.
+		$bad = self::validate_bookable( $order, $snap, $client, $opts );
+		if ( '' !== $bad ) {
+			wp_send_json_error( array( 'message' => self::validation_message( $bad ) ) );
+		}
+
+		$fresh  = $client->get_rates( $snap[ ES_TCG_Locker_Rate::M_DEST_CODE ], true );
+		$offers = ( ! empty( $fresh['ok'] ) && ! empty( $fresh['offers'] ) ) ? $fresh['offers'] : array();
+		$plan   = ES_TCG_Locker_Booking::plan_requote( $snap, $offers );
+		if ( empty( $plan['ok'] ) ) {
+			$order->update_meta_data( ES_TCG_Locker_Booking::M_LAST_ERROR, 'requote:' . $plan['reason'] );
+			$order->save();
+			wp_send_json_error( array( 'message' => self::requote_message( $plan['reason'] ) ) );
+		}
+
+		$confirm  = ! empty( $_POST['confirm'] );
+		$accepted = isset( $_POST['accepted'] ) ? (float) $_POST['accepted'] : null;
+		$old      = number_format( (float) $plan['old_rate'], 2 );
+		$new      = number_format( (float) $plan['new_rate'], 2 );
+
+		// Prompt unless this is a commit whose accepted price still matches live.
+		$matches_accepted = ( null !== $accepted )
+			&& ( abs( (float) $plan['new_rate'] - $accepted ) <= ES_TCG_Locker_Booking::PRICE_EPSILON );
+		if ( ! $confirm || ! $matches_accepted ) {
+			$prompt = $plan['changed']
+				? sprintf(
+					/* translators: 1: old rate, 2: new (current) rate. */
+					__( 'The locker price changed from R%1$s to R%2$s since the customer checked out. Accept the new R%2$s price and update this order so it can be booked? The customer’s charge stays R%1$s — the store absorbs the difference.', 'erpnext-shipping' ),
+					$old,
+					$new
+				)
+				: sprintf(
+					/* translators: %s: current rate. */
+					__( 'The live locker price is unchanged at R%s. Refresh the quote so this order can be booked?', 'erpnext-shipping' ),
+					$new
+				);
+			wp_send_json_success( array(
+				'confirm' => true,
+				'prompt'  => $prompt,
+				'new'     => (float) $plan['new_rate'],
+			) );
+		}
+
+		// Accepted price matches live → persist the refreshed snapshot.
+		if ( ! self::apply_requote_to_order( $order, $plan ) ) {
+			wp_send_json_error( array( 'message' => __( 'Could not update the order quote. Reload and try again.', 'erpnext-shipping' ) ) );
+		}
+		$order->update_meta_data( ES_TCG_Locker_Booking::M_LAST_ERROR, '' );
+
+		if ( $plan['changed'] ) {
+			$order->add_order_note( sprintf(
+				/* translators: 1: old rate, 2: new rate, 3: old revision, 4: new revision. */
+				__( 'TCG Locker quote refreshed by staff: provider rate R%1$s → R%2$s (revision %3$s → %4$s), new price accepted. Customer charge unchanged — the store absorbs the difference. Order can now be booked.', 'erpnext-shipping' ),
+				$old,
+				$new,
+				'' !== $plan['old_rev'] ? $plan['old_rev'] : '—',
+				'' !== $plan['new_rev'] ? $plan['new_rev'] : '—'
+			), 0 );
+			$msg = sprintf(
+				/* translators: 1: new rate, 2: old rate. */
+				__( 'Quote updated: locker shipping is now R%1$s (was R%2$s). The customer’s charge is unchanged. You can book this order now.', 'erpnext-shipping' ),
+				$new,
+				$old
+			);
+		} else {
+			$order->add_order_note( __( 'TCG Locker quote re-checked by staff — live provider rate and revision unchanged. Order can be booked.', 'erpnext-shipping' ), 0 );
+			$msg = sprintf(
+				/* translators: %s: current rate. */
+				__( 'Live quote re-checked — unchanged at R%s. You can book this order now.', 'erpnext-shipping' ),
+				$new
+			);
+		}
+		$order->save();
+		self::release_lock( $order_id, $token );
+		wp_send_json_success( array( 'message' => $msg ) );
+	}
+
+	/**
+	 * Persist a re-quote onto the order's locker shipping line: provider rate, ex-VAT
+	 * (when the provider supplied a positive figure), revision id and a fresh quote
+	 * timestamp. Never touches the customer charge. Returns false if the locker line
+	 * could not be found. Saves the line item; the caller saves the order.
+	 */
+	private static function apply_requote_to_order( $order, $plan ) {
+		foreach ( $order->get_items( 'shipping' ) as $item ) {
+			if ( '' === (string) $item->get_meta( ES_TCG_Locker_Rate::M_SERVICE_CODE, true ) ) {
+				continue;
+			}
+			$item->update_meta_data( ES_TCG_Locker_Rate::M_PROVIDER_RATE, (string) $plan['new_rate'] );
+			if ( null !== $plan['new_rate_ex'] ) {
+				$item->update_meta_data( ES_TCG_Locker_Rate::M_PROVIDER_EX, (string) $plan['new_rate_ex'] );
+			}
+			$item->update_meta_data( ES_TCG_Locker_Rate::M_REVISION_ID, (string) $plan['new_rev'] );
+			$item->update_meta_data( ES_TCG_Locker_Rate::M_QUOTE_TS, (string) time() );
+			$item->save();
+			return true;
+		}
+		return false;
+	}
+
+	private static function requote_message( $code ) {
+		$map = array(
+			'no_persisted_service' => __( 'This order has no locker service to re-quote.', 'erpnext-shipping' ),
+			'incomplete_snapshot'  => __( 'This order’s locker quote is incomplete and cannot be re-quoted. Book it via the TCG portal instead.', 'erpnext-shipping' ),
+			'no_fresh_quote'       => __( 'TCG returned no live quote for this locker just now. Try again shortly.', 'erpnext-shipping' ),
+			'service_unavailable'  => __( 'The locker service the customer chose is no longer offered for this locker. Book it via the TCG portal instead.', 'erpnext-shipping' ),
+			'box_changed'          => __( 'The provider changed the box for this service, so it cannot be auto-re-quoted. Book it via the TCG portal instead.', 'erpnext-shipping' ),
+			'no_fresh_price'       => __( 'TCG returned no usable price for this locker just now. Try again shortly.', 'erpnext-shipping' ),
+		);
+		return $map[ $code ] ?? __( 'Could not re-quote this order.', 'erpnext-shipping' );
 	}
 
 	/**

@@ -276,6 +276,95 @@ class ES_TCG_Locker_Booking {
 		return array( 'drift' => false, 'reason' => '' );
 	}
 
+	/**
+	 * Plan a staff RE-QUOTE: can the persisted checkout snapshot be refreshed to the
+	 * live offer for the SAME service and box, and what changed? Used by the admin
+	 * "Re-quote" action after a drift refusal, so a locker order whose provider price
+	 * moved between checkout and booking can be re-priced to the current quote and then
+	 * booked through the plugin (keeping polling + the arrival email) instead of being
+	 * booked by hand off-platform.
+	 *
+	 * Fail-CLOSED on every axis that would make the refresh unsafe: it reuses the exact
+	 * structural refusals of detect_drift() so a re-quote can never land the order on a
+	 * service that is gone, a box that changed, or a non-numeric price. A changed BOX is
+	 * deliberately refused (not silently re-boxed) — the fit was certified at checkout
+	 * against the persisted box, so a provider box change needs manual handling.
+	 *
+	 * PURE: computes only. The caller decides whether to persist (and never touches the
+	 * customer charge — only the provider rate/revision, so the drift guard will pass and
+	 * any increase is absorbed).
+	 *
+	 * @param array $persisted    Shipping-item snapshot (ES_TCG_Locker_Rate::M_* keys).
+	 * @param array $fresh_offers Offers from a FORCE-REFRESHED get_rates().
+	 * @return array{ok:bool, reason:string, old_rate:?float, new_rate:?float,
+	 *               old_rev:string, new_rev:string, new_rate_ex:?float, changed:bool}
+	 */
+	public static function plan_requote( $persisted, $fresh_offers ) {
+		$fail = function ( $reason ) {
+			return array(
+				'ok'          => false,
+				'reason'      => $reason,
+				'old_rate'    => null,
+				'new_rate'    => null,
+				'old_rev'     => '',
+				'new_rev'     => '',
+				'new_rate_ex' => null,
+				'changed'     => false,
+			);
+		};
+		$persisted = is_array( $persisted ) ? $persisted : array();
+
+		$svc = (string) ( $persisted[ ES_TCG_Locker_Rate::M_SERVICE_CODE ] ?? '' );
+		if ( '' === $svc ) {
+			return $fail( 'no_persisted_service' );
+		}
+		$p_box  = (string) ( $persisted[ ES_TCG_Locker_Rate::M_BOX_CODE ] ?? '' );
+		$p_rate = $persisted[ ES_TCG_Locker_Rate::M_PROVIDER_RATE ] ?? null;
+		if ( '' === $p_box || ! is_numeric( $p_rate ) ) {
+			return $fail( 'incomplete_snapshot' );
+		}
+		if ( ! is_array( $fresh_offers ) || empty( $fresh_offers ) ) {
+			return $fail( 'no_fresh_quote' );
+		}
+
+		$match = null;
+		foreach ( $fresh_offers as $o ) {
+			if ( is_array( $o ) && (string) ( $o['service_code'] ?? '' ) === $svc ) {
+				$match = $o;
+				break;
+			}
+		}
+		if ( null === $match ) {
+			return $fail( 'service_unavailable' );
+		}
+		$f_box = (string) ( $match['box_code'] ?? '' );
+		if ( '' === $f_box || $f_box !== $p_box ) {
+			return $fail( 'box_changed' );
+		}
+		$f_rate = $match['rate'] ?? null;
+		if ( ! is_numeric( $f_rate ) ) {
+			return $fail( 'no_fresh_price' );
+		}
+
+		$p_rev = (string) ( $persisted[ ES_TCG_Locker_Rate::M_REVISION_ID ] ?? '' );
+		$f_rev = (string) ( $match['rate_revision_id'] ?? '' );
+		$f_ex  = $match['rate_excluding_vat'] ?? null;
+
+		$changed = ( $p_rev !== $f_rev )
+			|| ( abs( (float) $p_rate - (float) $f_rate ) > self::PRICE_EPSILON );
+
+		return array(
+			'ok'          => true,
+			'reason'      => '',
+			'old_rate'    => (float) $p_rate,
+			'new_rate'    => (float) $f_rate,
+			'old_rev'     => $p_rev,
+			'new_rev'     => $f_rev,
+			'new_rate_ex' => is_numeric( $f_ex ) ? (float) $f_ex : null,
+			'changed'     => $changed,
+		);
+	}
+
 	private static function state( $state, $shipment_id, $tracking_ref, $error ) {
 		return array(
 			'state'        => $state,
